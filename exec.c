@@ -1,0 +1,228 @@
+#include "data.h"
+#define LINE_LEN 128 
+
+int			g_lineCount;
+
+bool			match_regex(struct sedRegex *r, char const *line)
+{
+  return (0 == regexec(&r->compile, line, 0, NULL, r->flags));
+}
+
+bool			match_address(addr, pattern, line)
+  struct sedAddr *addr; struct lineList *pattern; int line;
+{
+  return ((addr->type == ADDR_NONE 
+    || addr->type == ADDR_LINE  && line == addr->info.line
+    || addr->type == ADDR_END   && !pattern->lookahead
+    || addr->type == ADDR_REGEX && match_regex(&addr->info.regex, pattern->active)));
+}
+
+bool			match_addressRange(addr, pattern, line)
+  struct sedCmdAddr *addr; struct lineList *pattern; int line;
+{
+  bool			r;
+
+  if (addr->a1.type != ADDR_NONE) // Range inactive
+    if (r = match_address(addr->a1, pattern, line))
+    {
+      addr->a1.type = ADDR_NONE; // Range active
+      return (true);
+    }
+  if (r = match_address(addr->a2, pattern, line))
+  {
+    addr->type = CMD_ADDR_DONE;  // Address will never be matched again.. (remove cmd ?)
+    return (false);
+  }
+  return (true);
+}
+
+bool			match_addressStep(addr, pattern, line)
+  struct sedCmdAddr *addr; struct lineList *pattern; int line;
+{
+}
+
+bool			match_cmdAddress(addr, pattern, line)
+    struct sedCmdAddr *addr; struct lineList *pattern; int line; 
+{
+  return (addr->bang != 
+      (addr->type == CMD_ADDR_DONE
+      || addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern, line)
+      || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern, line)
+      || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern, line)));
+}
+
+void	append_queue(struct lstring *text, FILE *out)
+{
+  static struct lstring buf = {NULL, 0, 0};
+
+  if (!text)
+  {
+    if (buf.len)
+      fwrite(buf.buf, buf.len, 1, out);
+    return ;
+  }
+  if (buf.alloc < text->len + buf.len)
+  {
+    buf.alloc || (buf.alloc = 512);
+    while (buf.alloc < text->len + buf.len)
+      buf.alloc <<= 1;
+    buf.buf = xrealloc(buf.buf, buf.alloc);
+  }
+  memcpy(buf.buf + buf.len, text->buf, text->len);
+  buf.len += text->len;
+}
+
+struct lineList		*lineList_new()
+{
+  struct lineList	*l;
+
+  l = xmalloc(sizeof(*l));
+  l->active = l->buf = xmalloc(l->alloc = 256);
+  l->buf[l->len = 0] = 0;;
+  l->lookahead = lstring_new();
+  return (l);
+}
+
+void			lineList_appendText(struct lineList *l, char *text, int len)
+{
+  if (l->alloc - l->len < len + 2)
+    l->active = l->buf = xrealloc(l->buf, l->alloc + l->len + len);
+  memcpy(l->active + l->len, text, len);
+  l->len += len;
+  if (!len)
+  {
+    l->active[++l->len] = '\n';
+    l->active[++l->len] = 0;
+  }
+}
+
+bool			lineList_readLine(struct lineList *l, FILE *in)
+{
+  ++g_lineCount;
+  if (lstring_getline(l->lookahead, in) == -1)
+    return (false);
+  lineList_appendText(l, l->lookahead->buf, l->lookahead->len + 1);
+}
+
+void			lineList_deleteEmbeddedLine(struct lineList *l, FILE *out)
+{
+  char			*save;
+
+  save = l->active;
+  l->active = strchrnul(l->active, '\n');
+  l->active += *l->active == '\n';
+  l->len -= l->active - save;
+  out && fwrite(l->active, l->active - save, 1, out);
+}
+
+void			lineList_appendLineList(struct lineList *line, struct lineList *ap)
+{
+  lineList_appendText(line, ap->active, ap->len);
+}
+
+void			lineList_deleteLine(struct lineList *l, FILE *out)
+{
+  out && fwrite(l->active, l->len, 1, out);
+  l->active = l->buf;
+  l->len = 0;
+}
+
+struct lstring		*resolve_backrefs(struct lstring *new, struct SCmd *s,
+    regmatch_t pmatch[], struct lineList *pattern)
+{
+}
+
+// Build the new pattern space as a list of subStrings. 
+void			exec_s(struct SCmd *s, struct lineList *pattern)
+{
+  char			*cursor;
+  struct lstring	*new;
+  regmatch_t		pmatch[10];
+  int			j;
+
+  new = lstring_new();
+  cursor = pattern->active;
+  do {
+    if (regexec(&s->pattern.compile, cursor, 10, pmatch, 0))
+      return ((void) lstring_free(new));
+    if (s->new.n_refs)
+      new = resolve_backrefs(new, s, pmatch, pattern);
+    else
+      lstring_addString(new, s->new.text, s->new.n_refs); // suspect
+    memmove(cursor + pmatch[0].rm_eo, cursor + new->len, new->len);
+    memmove(cursor + pmatch[0].rm_so, new->buf, new->len);
+    cursor += pmatch[0].rm_eo;
+    new->len = 0;
+  } while ((const char) s->g);
+}
+
+char			exec_file(struct sedProgram *prog, FILE *in, FILE *out) 
+{ 
+  static struct lineList 	*pattern, *hold;
+pattern = lineList_new(); hold = lineList_new();
+  while (lineList_readLine(pattern, in) == true)
+  {
+    for (struct sedCmd *cmd = prog->cmdStack; cmd->cmdChar; ++cmd)
+      if ((!cmd->addr || match_cmdAddress(cmd->addr, pattern, g_lineCount)) && ("--%c--\n", cmd->cmdChar))
+      {
+	switch (cmd->cmdChar)
+	{
+	  case '=': fprintf(out, "%d\n", g_lineCount); fflush(out); break;
+	  case 'a': append_queue(cmd->info.text, out); break;
+	  case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
+	  case 'q': lineList_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
+	  case 'Q': return (cmd->info.int_arg);
+	  case 'r':
+	  case 'R':
+	  case 'b': cmd = prog->cmdStack + cmd->info.int_arg - 1; continue;
+	  case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
+	  case 'd': lineList_deleteLine(pattern, NULL); break;
+	  case 'D': lineList_deleteEmbeddedLine(pattern, NULL); break;
+	  case 'h': lineList_deleteLine(hold, 0); lineList_appendLineList(hold, pattern); break;
+	  case 'H': lineList_appendLineList(hold, pattern); break;
+	  case 'g': lineList_deleteLine(pattern, 0);lineList_appendLineList(pattern, hold);break;
+	  case 'G': lineList_appendLineList(pattern, hold); break;
+	  case 'l':
+	  case 'n': lineList_readLine(pattern, in); continue;
+	  case 'N': lineList_readLine(pattern, in); break;
+	  case 'p': lineList_deleteLine(pattern, out);
+	  case 'P': lineList_deleteEmbeddedLine(pattern, out);
+	  case 's': exec_s(cmd->info.s, pattern); break;
+	  case 't': cmd = prog->cmdStack + cmd->info.int_arg - 1; continue;
+	  case 'T': cmd = prog->cmdStack + cmd->info.int_arg - 1; continue;
+	  case 'w':
+	  case 'W':
+	  case 'x':
+	  case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
+		      cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
+	  default : panic("Internal error: compiled %c.", cmd->cmdChar);
+	}
+      }
+    lineList_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
+    append_queue(0, out); // flush append_queue;
+  }
+  return (0);
+}
+
+char			exec_stream(struct sedProgram *prog, int ac, char **filelist)
+{
+  int			st;
+  FILE			*file;
+
+  st = 0;
+  while (*filelist)
+  {
+    g_sedOptions.separate && (g_lineCount = 0);
+    printf("executing file '%s'\n", *filelist);
+    file = fopen(*filelist, "r");
+    if (!file)
+      printf("Couldn't open file '%s' for reading\n", *filelist);
+    else
+    {
+      st |= exec_file(prog, file, stdout);
+      fclose(file);
+    }
+    ++filelist;
+  }
+  return (st);
+}
