@@ -46,9 +46,9 @@ inline char	nextNonBlank()
 {
   char	c;
 
-  while (c = getchar()) // Won't work for '\0' ...
-    if (!isblank(c))
-      return (c);
+  while ((c = getchar()) != EOF && isblank(c))
+    ;
+  return (c);
 }
 
 int	nextNumber(char c)
@@ -74,14 +74,14 @@ struct sedCmd		*newCmd(struct sedProgram *prog, struct sedCmdAddr *init)
 char			compile_address_regex(struct sedRegex *regex, char delim, int cflags)
 {
   char			in;
-  struct lstring	*text;
+  struct vbuf	*text;
 
   delim == '\\' && (delim = nextChar());
   text = snarf(delim);
   if (!text)
     bad_cmd('/');
   regcomp(&regex->compile, text->buf, regex->flags = cflags);
-  lstring_free(text);
+  vbuf_free(text);
   return (0);
 }
 
@@ -187,7 +187,7 @@ void			connect_labels(struct sedProgram *prog)
 void			compile_y(struct sedCmd *cmd)
 {
   unsigned char		t;
-  struct lstring	*a, *b;
+  struct vbuf	*a, *b;
 
   a = snarf((t = nextChar()) == '/' ? t : (t = nextChar()));
   b = snarf(t);
@@ -202,28 +202,13 @@ void			compile_y(struct sedCmd *cmd)
       panic("%c is already mapped to %c", a[t], b[t]);
     else
       cmd->info.y[(int) a->buf[t]] = b->buf[t];
-  lstring_free(a); lstring_free(b);
+  vbuf_free(a); vbuf_free(b);
 }
 
-void			S_backrefs(struct SCmd *s)
+char	get_s_options(struct SCmd *s)
 {
-}
+  char	cflags, delim;
 
-struct SCmd 		*compile_s()
-{
-  struct SCmd		*s;
-  char			delim;
-  struct lstring	*replace, *regex;
-  int			cflags;
-
-  s = xmalloc(sizeof(*s));
-  s->g = s->p = s->e = s->d = s->number = cflags = 0; s->w = NULL;
-  delim = nextChar();
-  delim == '\\' && (delim = nextChar());
-  if (!(regex = snarf(delim)) || !(replace = snarf(delim)))
-    bad_cmd('/');
-  s->new.text = replace->buf;
-  free(replace);
   cflags = REG_EXTENDED * g_sedOptions.extended_regex_syntax;
   while ((delim = nextChar()) && delim != '\n' && delim != ';' && delim != EOF)
     switch (delim)
@@ -235,11 +220,36 @@ struct SCmd 		*compile_s()
       case 'i': cflags |= REG_ICASE; break;
       default: printf("S (%d):", delim); fflush(stdout); bad_cmd(delim);
     }
+  return (cflags);
+}
+
+void			S_backrefs(struct SCmd *s)
+{
+}
+
+struct SCmd 		*compile_s()
+{
+  struct SCmd		*s;
+  char			delim;
+  struct vbuf	*replace, *regex;
+  int			cflags;
+
+  s = xmalloc(sizeof(*s));
+  s->g = s->p = s->e = s->d = s->number = cflags = 0; s->w = NULL;
+  delim = nextChar();
+  delim == '\\' && (delim = nextChar());
+  if (!(regex = snarf(delim)) || !(replace = snarf(delim)))
+    bad_cmd('/');
+  cflags = get_s_options(s);
+  s->new.text = replace->buf;
+  s->new.n_refs = replace->len;
+  free(replace);
   regcomp(&s->pattern.compile, regex->buf, cflags);
-  lstring_free(regex);
-  if (0 && s->pattern.compile.re_nsub)
-    S_backrefs(s);
-  printf("end of s: prevchar(%c)\n", delim);
+  vbuf_free(regex);
+  s->new.recipe = xmalloc(sizeof(char *) * 2);
+  s->new.recipe[0] = s->new.text;
+  s->new.recipe[1] = NULL;
+  S_backrefs(s);
   return (s);
 }
 

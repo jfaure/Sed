@@ -44,14 +44,14 @@ struct		zbuf	{
 #define prevChar(c) assert(asdf = g_in.cursor >= g_in.next->buf ? *g_in.cursor : g_in.last\
     + !printf("prevChar %c\n", asdf))
 
-struct		lstring	{ // Interface for automatic string memory managment
+struct		vbuf	{ // Interface for automatic string memory managment
   char		*buf;
   size_t	len;
   size_t	alloc;
 };
 
 /*
-** Data for pattern and holdspace. (encapsulation for lstring)
+** Data for pattern and holdspace. (encapsulation for vbuf)
 ** We always maintain at least one line of lookahead (nextLine),
 ** to tell if $ address matches active.
 */
@@ -60,7 +60,7 @@ struct			lineList	{  // Data for fast line deletion and append.
   size_t		alloc;
   char			*active;
   size_t		len;
-  struct lstring	*lookahead;
+  struct vbuf	*lookahead;
 };
 
 struct sedRegex	{
@@ -109,7 +109,7 @@ struct 			sedCmd	{
   union		{
     struct SCmd		*s;
     char		*y;
-    struct lstring	*text; // For a, i commands
+    struct vbuf	*text; // For a, i commands
     int			int_arg;
     FILE		*file;
   }			info;
@@ -127,15 +127,14 @@ struct 			sedInput	{ // Used for reading in prog
   int			line;		// For meaningful error messages
 }			g_progInput;
 
-struct subString	{
-  int	 		so;
-  int			len;
-};
-
+/* 
+** concatenate recipe to create the replacement.
+** pointer values 0 to 9 are backreferences
+*/
 struct SReplacement		{
-  char			*text;
+  char			*text; //private reference string
   size_t 		n_refs;
-  struct subString	*ref;
+  char			**recipe; //parts of text, backrefs
 };
 
 struct			SCmd	{
@@ -153,10 +152,10 @@ void	*xmalloc(size_t len);
 void	*xrealloc(void *ptr, size_t len);
 FILE	*xfopen(const char *f_name, const char *mode);
 
-struct lstring	*lstring_new();
-ssize_t	lstring_getline(struct lstring *text, FILE *in);
-struct lstring	*read_text();
-struct lstring	*snarf(char delim);
+struct vbuf	*vbuf_new();
+ssize_t	vbuf_getline(struct vbuf *text, FILE *in);
+struct vbuf	*read_text();
+struct vbuf	*snarf(char delim);
 
 struct lineList	*lineList_new();
 void		lineList_appendText(struct lineList *l, char *text, int len);

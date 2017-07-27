@@ -51,9 +51,9 @@ bool			match_cmdAddress(addr, pattern, line)
       || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern, line)));
 }
 
-void	append_queue(struct lstring *text, FILE *out)
+void	append_queue(struct vbuf *text, FILE *out)
 {
-  static struct lstring buf = {NULL, 0, 0};
+  static struct vbuf buf = {NULL, 0, 0};
 
   if (!text)
   {
@@ -79,7 +79,7 @@ struct lineList		*lineList_new()
   l = xmalloc(sizeof(*l));
   l->active = l->buf = xmalloc(l->alloc = 256);
   l->buf[l->len = 0] = 0;;
-  l->lookahead = lstring_new();
+  l->lookahead = vbuf_new();
   return (l);
 }
 
@@ -99,7 +99,7 @@ void			lineList_appendText(struct lineList *l, char *text, int len)
 bool			lineList_readLine(struct lineList *l, FILE *in)
 {
   ++g_lineCount;
-  if (lstring_getline(l->lookahead, in) == -1)
+  if (vbuf_getline(l->lookahead, in) == -1)
     return (false);
   lineList_appendText(l, l->lookahead->buf, l->lookahead->len + 1);
 }
@@ -127,7 +127,7 @@ void			lineList_deleteLine(struct lineList *l, FILE *out)
   l->len = 0;
 }
 
-struct lstring		*resolve_backrefs(struct lstring *new, struct SCmd *s,
+struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
     regmatch_t pmatch[], struct lineList *pattern)
 {
 }
@@ -136,21 +136,21 @@ struct lstring		*resolve_backrefs(struct lstring *new, struct SCmd *s,
 void			exec_s(struct SCmd *s, struct lineList *pattern)
 {
   char			*cursor;
-  struct lstring	*new;
+  struct vbuf	*new;
   regmatch_t		pmatch[10];
-  int			j;
+  int			diff;
 
-  new = lstring_new();
+  new = vbuf_new();
   cursor = pattern->active;
   do {
+    printf("s: cursor: %s\n", cursor);
     if (regexec(&s->pattern.compile, cursor, 10, pmatch, 0))
-      return ((void) lstring_free(new));
-    if (s->new.n_refs)
-      new = resolve_backrefs(new, s, pmatch, pattern);
-    else
-      lstring_addString(new, s->new.text, s->new.n_refs); // suspect
-    memmove(cursor + pmatch[0].rm_eo, cursor + new->len, new->len);
-    memmove(cursor + pmatch[0].rm_so, new->buf, new->len);
+      return ((void) vbuf_free(new));
+    vbuf_addString(new, s->new.recipe[0], strlen(s->new.recipe[0])); // strlen..
+    // maybe realloc !!
+    diff = pattern->len - (cursor + pmatch[0].rm_so - pattern->buf);
+    memmove(cursor + pmatch[0].rm_so + new->len - 1, cursor + pmatch[0].rm_eo, diff); // prepare insert
+    memmove(cursor + pmatch[0].rm_so, new->buf, new->len - 1);
     cursor += pmatch[0].rm_eo;
     new->len = 0;
   } while ((const char) s->g);
