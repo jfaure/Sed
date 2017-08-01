@@ -159,8 +159,13 @@ char			exec_s(struct SCmd *s, struct lineList *pattern)
     ++subs;
     new = resolve_backrefs(new, s, pmatch, cursor);
     diff = pattern->len - (cursor - pattern->buf + pmatch[0].rm_so);
-    if (diff > pattern->len)
+    while (2 + diff > pattern->alloc - pattern->len)
     {
+      pattern->active -= (long) pattern->buf;
+      cursor -= (long) pattern->buf;
+      pattern->buf = xrealloc(pattern->buf, pattern->alloc <<= 1);
+      pattern->active += (long) pattern->buf;
+      cursor += (long) pattern->buf;
     }
     assert(diff > 0);
     memmove(cursor + pmatch[0].rm_so + new->len, cursor + pmatch[0].rm_eo, diff);
