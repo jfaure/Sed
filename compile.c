@@ -1,8 +1,12 @@
 #include <stdio.h>
 #include "data.h"
 
+/*
+** Prepare next file/string for nextChar()
+** should allow for stuff like sed -e i -f <(echo insertthis)
+*/
 char	nextProgStream()
-{ puts("nextProgStream");
+{ DBcompile("nextProgStream\n");
   if (!g_in.next)
     return EOF;
   g_in.cursor && (g_in.last = g_in.cursor[-1]);
@@ -26,8 +30,7 @@ char	nextProgStream()
 void			prog_addScript(char *str, char *filename)
 {
   static struct zbuflist	*last = 0;
-puts("adding script");
-assert(str || filename);
+  DBcompile("adding script");
   if (!last)
     last = g_in.next = xmalloc(sizeof(*last));
   else
@@ -42,15 +45,6 @@ assert(str || filename);
 void	bad_prog(char const *why) { fprintf(stderr, why); exit(1); } 
 void	bad_cmd(char cmd) { fprintf(stderr, "Unknown Command: %c", cmd); exit(1); }
 
-inline char	nextNonBlank()
-{
-  char	c;
-
-  while ((c = getchar()) != EOF && isblank(c))
-    ;
-  return (c);
-}
-
 int	nextNumber(char c)
 {
   int	r;
@@ -64,12 +58,6 @@ int	nextNumber(char c)
   return (r);
 }
 
-struct sedCmd		*newCmd(struct sedProgram *prog, struct sedCmdAddr *init)
-{
-  if (++prog->pos == prog->len)
-    prog->cmdStack = xrealloc(prog->cmdStack, prog->len <<= 1);
-  return (prog->cmdStack + prog->pos);
-}
 
 char			compile_address_regex(struct sedRegex *regex, char delim, int cflags)
 {
@@ -87,7 +75,7 @@ char			compile_address_regex(struct sedRegex *regex, char delim, int cflags)
 
 bool			compile_address(struct sedAddr *addr, char in)
 {
-  printf("compile address, in = %c\n", in);
+  DBcompile("compile address, in = %c\n", in);
   if (isdigit(in))
   {
     addr->type = ADDR_LINE;
@@ -116,9 +104,8 @@ char			compile_cmd_address(struct sedCmd *cmd)
   cmd->addr = xmalloc(sizeof(*cmd->addr));
   cmd->addr->bang = 0;
   cmd->addr->type = CMD_ADDR_DONE;
-  while ((in = nextChar()) == ';');
-  if (in == EOF)
-    return (0);
+  while ((in = nextChar()) == ';' || isblank(in) || in == '\n');
+  if (in == EOF) return (0);
   if (compile_address(&cmd->addr->a1, in) == false && in != ',' && in != '~')
   {
     free(cmd->addr);
@@ -141,47 +128,6 @@ char			compile_cmd_address(struct sedCmd *cmd)
     return (nextChar());
   }
   return (nextChar());
-}
-
-
-static struct sedLabel	*g_first_label;
-
-void	add_label(size_t pos, char *name)
-{
-  struct sedLabel	*l;
-
-  l = xmalloc(sizeof(*l));
-  l->name = name;
-  l->pos = pos;
-  l->next = g_first_label;
-  g_first_label = l;
-}
-
-void			connect_labels(struct sedProgram *prog)
-{
-  struct sedLabel	*t;
-  int			i;
-
-  i = -1;
-  while (++i < prog->pos)
-    if (strchr("btT", prog->cmdStack[i].cmdChar))
-    {
-      t = g_first_label;
-      while (t)
-	if (strcmp(t->name, prog->cmdStack[i].info.text->buf))
-	  t = t->next;
-	else
-	{
-	  prog->cmdStack[i].info.int_arg = t->pos;
-	  break ;
-	}
-	t || (prog->cmdStack[i].info.int_arg = 0);
-    }
-  while (t = g_first_label)
-  {
-    g_first_label = t->next;
-    free(t);
-  }
 }
 
 void			compile_y(struct sedCmd *cmd)
@@ -218,13 +164,33 @@ char	get_s_options(struct SCmd *s)
       case 'e': s->e = 1; break;
       case 'm': cflags |= REG_NEWLINE; break;
       case 'i': cflags |= REG_ICASE; break;
-      default: printf("S (%d):", delim); fflush(stdout); bad_cmd(delim);
+      default: printf("S (%d):", delim); fflush(stdout); panic("unknown s optino %c\n", delim);
     }
   return (cflags);
 }
 
-void			S_backrefs(struct SCmd *s)
+char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
 {
+  int			i, len;
+
+  new->text = replace;
+  new->recipe = xmalloc(sizeof(*new->recipe) * (len = 10));
+  i = 0;
+  new->recipe[i++] = replace;
+  while (*replace)
+    if (*replace == '\\' || *replace == '&')
+    {
+      if (*replace == '&')
+	new->recipe[i++] = 0;
+      else if (*++replace >= '0' && *replace <= '9')
+	new->recipe[i++] = (char *)(long) *replace - '0';
+      else panic("bad s command syntax");
+      *replace++ = 0;
+    }
+    else
+      ++replace;
+  new->recipe[i] = (char *) -1; // mark end of recipe
+  return (new->recipe);
 }
 
 struct SCmd 		*compile_s()
@@ -243,48 +209,93 @@ struct SCmd 		*compile_s()
   cflags = get_s_options(s);
   s->new.text = replace->buf;
   s->new.n_refs = replace->len;
+  s->new.recipe = S_backrefs(s, &s->new, s->new.text);
   free(replace);
   regcomp(&s->pattern.compile, regex->buf, cflags);
   vbuf_free(regex);
-  s->new.recipe = xmalloc(sizeof(char *) * 2);
-  s->new.recipe[0] = s->new.text;
-  s->new.recipe[1] = NULL;
-  S_backrefs(s);
   return (s);
 }
 
-struct sedProgram	*compile_program(struct sedProgram *prog)
+void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 {
+  static struct obstack obstack;
+  static struct nameList {
+    char 			*name;
+    struct nameList 		*next;
+    struct sedProgram		*pos;
+  } *labels = 0, *jumps = 0, *tmp;
+
+  if (!labels && !jumps)
+    obstack_init(&obstack);
+  if (labelcmd) // add label
+  {
+    tmp = labels;
+    labels = obstack_alloc(&obstack, sizeof(*labels));
+    labels->next = tmp;
+    labels->name = vbuf_tostring(vbuf_readName());
+    labels->pos = labelcmd;
+  }
+  else if (jmpcmd) // add jmp
+  {
+    tmp = jumps;
+    jumps = obstack_alloc(&obstack, sizeof(*labels));
+    jumps->next = tmp;
+    jumps->name = vbuf_tostring(vbuf_readName());
+    jumps->pos = jmpcmd;
+  }
+  else // finished, connect all jumps
+  {
+    while (jumps)
+    {
+      for (tmp = labels; tmp; tmp = tmp->next)
+	if (!strcmp(tmp->name, jumps->name))
+	{
+	  jumps->pos->cmd.info.jmp = tmp->pos; 
+	  break;
+	}
+      jumps = jumps->next;
+    }
+    obstack_free(&obstack, NULL);
+  }
+}
+
+struct sedProgram	*compile_program(struct sedProgram *const first)
+{
+  struct obstack	obstack;
+  struct sedProgram	*prog;
   struct sedCmd		*cmd;
   struct sedCmdAddr	*save_addr; // for cmd groups '{' '}'
 
-  cmd = newCmd(prog, save_addr = NULL);
-  while (cmd)
+  obstack_init(&obstack);
+  prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
+  save_addr = NULL;
+  for (;;)
   {
+    cmd = &prog->cmd;
     cmd->cmdChar = compile_cmd_address(cmd);
-    cmd->cmdChar && fprintf(stderr, "compiling %d(%c)\n", cmd->cmdChar, cmd->cmdChar);
+    cmd->cmdChar && DBcompile("compiling %d(%c)\n", cmd->cmdChar, cmd->cmdChar);
     switch (cmd->cmdChar) // Use switch as dispatch table
-    { // Internally switch is a binary tree of branches (should prbly be a hash though)
-      case 0:   cmd = 0; // exit while loop
-      case '#': continue;
+    {
+      case 0:   cmd->cmdChar = '#'; cmd = 0; goto finish; // only way out
+      case '#': vbuf_free(vbuf_readName); continue;
       case EOF: bad_prog("Missing command for address");
-      case ':': add_label(prog->pos, snarf('\n')->buf); break;
       case '{': save_addr = cmd->addr; break;
       case '}': save_addr = NULL; break;
       case 'a': case 'i': case 'c': cmd->info.text = read_text(); break;
       case 'q': case 'Q': cmd->info.int_arg = nextNumber(nextChar()); break;
-      case 'r': case 'R': // free snarf ?
-      case 'w': case 'W': cmd->info.file = xfopen(snarf('\n')->buf, "rw"); break;
+      case 'r': case 'R':
+      case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
       case 'd': case 'D': case 'h': case 'H': case 'g': case 'G': case 'x':
-      case 'l': case 'n': case 'N': case 'p': case 'P': case '=': break; // easy..
-      case 'b': case 't': case 'T': cmd->info.text = snarf('\n'); break;
+      case 'l': case 'n': case 'N': case 'p': case 'P': case '=': break;
+      case ':': do_label(prog, NULL); continue;
+      case 'b': case 't': case 'T': do_label(NULL, prog); break;
       case 's': cmd->info.s = compile_s(); break;
       case 'y': compile_y(cmd); break;
-      default: fputs("main loop:", stdout);bad_cmd(cmd->cmdChar);
+      default: DBcompile("main loop:");bad_cmd(cmd->cmdChar);
     }
-    cmd = newCmd(prog, save_addr);
+    prog = prog->next = obstack_alloc(&obstack, sizeof(*prog)); // 'continue' skips this
   }
-  connect_labels(prog);
-  prog->len = prog->pos;
-  return (prog);
+  finish:
+  do_label(NULL, NULL); // connect jmps
+  return(prog->next = first);
 }

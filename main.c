@@ -54,27 +54,24 @@ int	main(int ac, char **av)
     {NULL, 0, NULL, 0}
   };
   char			opt;
-  struct sedProgram	*prog;
+  struct sedProgram	prog;
 
-  prog = xmalloc(sizeof(*prog));
-  prog->pos = -1;
-  prog->cmdStack = xmalloc(sizeof(struct sedCmd) * (prog->len = 20));
   while ((opt = getopt_long(ac, av, shortopts, longopts, NULL)) != -1)
     switch (opt)
     {
       case 'i': g_sedOptions.in_place = 1; // -i implies -s
       case 's': g_sedOptions.separate = 1; break;
       case 'n': g_sedOptions.silent = 1; break;
-      case 'f': prog_addScript(NULL, optarg); break;
+      case 'f': prog_addScript("", optarg); break;
       case 'e': prog_addScript(optarg, NULL); break;
       default:  usage(4);
     }
-  if (prog->pos == -1)
+  if (!g_in.next)
     if (optind < ac)
       prog_addScript(av[optind++], NULL);
     else
       usage(1);
-  compile_program(prog);
-  fputs("-----------------------------\n", stderr);
-  return (exec_stream(prog, ac - optind, av + optind));
+  compile_program(&prog);
+  fputs("-----------------------------\n", stdout);
+  return (exec_stream(&prog, av + optind));
 }

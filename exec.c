@@ -128,45 +128,68 @@ void			lineList_deleteLine(struct lineList *l, FILE *out)
 }
 
 struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
-    regmatch_t pmatch[], struct lineList *pattern)
+    regmatch_t pmatch[], char *cursor)
 {
+  char		**recipe;
+
+  new->len = 0;
+  for (recipe = s->new.recipe; *recipe != (char *) -1; ++recipe)
+    if ((long) *recipe < 10)
+    {
+      vbuf_addString(new, cursor + pmatch[(long) *recipe].rm_so,
+	  pmatch[(long) *recipe].rm_eo - pmatch[(long) *recipe].rm_so);
+    }
+    else
+      vbuf_addString(new, *recipe, strlen(*recipe));
+  vbuf_addChar(new, 0);
+  --new->len;
+  return (new);
 }
 
-// Build the new pattern space as a list of subStrings. 
-void			exec_s(struct SCmd *s, struct lineList *pattern)
+char			exec_s(struct SCmd *s, struct lineList *pattern)
 {
   char			*cursor;
-  struct vbuf	*new;
+  struct vbuf		*new;
   regmatch_t		pmatch[10];
-  int			diff;
+  int			diff, subs;
 
   new = vbuf_new();
   cursor = pattern->active;
+  subs = 0;
   do {
-    printf("s: cursor: %s\n", cursor);
-    if (regexec(&s->pattern.compile, cursor, 10, pmatch, 0))
-      return ((void) vbuf_free(new));
-    vbuf_addString(new, s->new.recipe[0], strlen(s->new.recipe[0])); // strlen..
-    // maybe realloc !!
+ //   printf("s: cursor: %s\n", cursor);
+    if (regexec(&s->pattern.compile, cursor, 10, pmatch, 0)) {
+      vbuf_free(new);
+      break;
+    }
+    ++subs;
+    new = resolve_backrefs(new, s, pmatch, cursor);
     diff = pattern->len - (cursor + pmatch[0].rm_so - pattern->buf);
-    memmove(cursor + pmatch[0].rm_so + new->len - 1, cursor + pmatch[0].rm_eo, diff); // prepare insert
-    memmove(cursor + pmatch[0].rm_so, new->buf, new->len - 1);
-    cursor += pmatch[0].rm_eo;
-    new->len = 0;
-  } while ((const char) s->g);
+    memmove(cursor + pmatch[0].rm_so + new->len, cursor + pmatch[0].rm_eo, diff);
+    memmove(cursor + pmatch[0].rm_so, new->buf, new->len);
+    pattern->len += diff = new->len - (pmatch[0].rm_eo - pmatch[0].rm_so);
+    cursor += diff + pmatch[0].rm_so + 1;
+  } while ((const char) s->g && *cursor);
+  return (subs); // has a substitution been made
 }
 
 char			exec_file(struct sedProgram *prog, FILE *in, FILE *out) 
 { 
+  struct sedProgram		*first;
   static struct lineList 	*pattern, *hold;
-pattern = lineList_new(); hold = lineList_new();
+  static char	lastsub;
+  struct sedCmd			*cmd;
+
+  first = prog;
+  lastsub = 0; pattern = lineList_new(); hold = lineList_new();
   while (lineList_readLine(pattern, in) == true)
   {
-    for (struct sedCmd *cmd = prog->cmdStack; cmd->cmdChar; ++cmd)
-      if ((!cmd->addr || match_cmdAddress(cmd->addr, pattern, g_lineCount)) && ("--%c--\n", cmd->cmdChar))
+    while ((prog = prog->next) != first && (cmd = &prog->cmd))
+      if (!cmd->addr || match_cmdAddress(cmd->addr, pattern, g_lineCount))
       {
 	switch (cmd->cmdChar)
 	{
+	  case '#': break;
 	  case '=': fprintf(out, "%d\n", g_lineCount); fflush(out); break;
 	  case 'a': append_queue(cmd->info.text, out); break;
 	  case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
@@ -174,7 +197,7 @@ pattern = lineList_new(); hold = lineList_new();
 	  case 'Q': return (cmd->info.int_arg);
 	  case 'r':
 	  case 'R':
-	  case 'b': cmd = prog->cmdStack + cmd->info.int_arg - 1; continue;
+	  case 'b': 0; continue;
 	  case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
 	  case 'd': lineList_deleteLine(pattern, NULL); break;
 	  case 'D': lineList_deleteEmbeddedLine(pattern, NULL); break;
@@ -185,36 +208,41 @@ pattern = lineList_new(); hold = lineList_new();
 	  case 'l':
 	  case 'n': lineList_readLine(pattern, in); continue;
 	  case 'N': lineList_readLine(pattern, in); break;
-	  case 'p': lineList_deleteLine(pattern, out);
-	  case 'P': lineList_deleteEmbeddedLine(pattern, out);
-	  case 's': exec_s(cmd->info.s, pattern); break;
-	  case 't': cmd = prog->cmdStack + cmd->info.int_arg - 1; continue;
-	  case 'T': cmd = prog->cmdStack + cmd->info.int_arg - 1; continue;
+	  case 'p': lineList_deleteLine(pattern, out); break;
+	  case 'P': lineList_deleteEmbeddedLine(pattern, out); break;
+	  case 's': lastsub = exec_s(cmd->info.s, pattern); break;
+	  case 't': lastsub && (0);
+		    lastsub = 0; break;
+	  case 'T': lastsub || (0);
+		    lastsub = 0; break;
 	  case 'w':
 	  case 'W':
 	  case 'x':
 	  case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
 		      cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
-	  default : panic("Internal error: compiled %c.", cmd->cmdChar);
+	  default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);
 	}
       }
+end:
     lineList_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
     append_queue(0, out); // flush append_queue;
   }
   return (0);
 }
 
-char			exec_stream(struct sedProgram *prog, int ac, char **filelist)
+char			exec_stream(struct sedProgram *prog, char **filelist)
 {
   int			st;
   FILE			*file;
 
   st = 0;
+  if (!*filelist)
+    st = exec_file(prog, stdin, stdout);
   while (*filelist)
   {
     g_sedOptions.separate && (g_lineCount = 0);
     printf("executing file '%s'\n", *filelist);
-    file = fopen(*filelist, "r");
+    file = **filelist == '-'  && !filelist[0][1] ? stdin : fopen(*filelist, "r");
     if (!file)
       printf("Couldn't open file '%s' for reading\n", *filelist);
     else

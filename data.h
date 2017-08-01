@@ -15,17 +15,30 @@
 #include <assert.h> //temporary ?
 #include <ctype.h>
 
+#include <obstack.h>
+#define obstack_chunk_alloc xmalloc
+#define obstack_chunk_free  free
+
+#define DBcompile //printf
+
 struct		sedOptions	{
   unsigned	silent:			1;
   unsigned	follow_symlinks:	1;
   unsigned	in_place:		1;
   unsigned	null_data:		1;
-  unsigned	separate:		1; // reset line count for each file
+  unsigned	separate:		1;
   unsigned	extended_regex_syntax:	1;
-};
+} 		g_sedOptions;
 
 char asdf;
-extern struct sedOptions g_sedOptions;
+#define nextChar() ((asdf = *g_in.cursor == 0 ? \
+      nextProgStream() : *g_in.cursor++) \
+    + !DBcompile("nextChar '%c'\n", asdf))
+
+#define prevChar(c) assert(asdf = \
+    g_in.cursor >= g_in.next->buf ? \
+    *g_in.cursor : g_in.last\
+    + !DBcompile("prevChar '%c'\n", asdf))
 
 struct		zbuf	{
   char		*cursor;
@@ -39,28 +52,23 @@ struct		zbuf	{
   }		*next;
 }		g_in;
 
-#define nextChar() ((asdf = *g_in.cursor == 0 ? nextProgStream() : *g_in.cursor++) \
-    + !printf("nextChar %c\n", asdf))
-#define prevChar(c) assert(asdf = g_in.cursor >= g_in.next->buf ? *g_in.cursor : g_in.last\
-    + !printf("prevChar %c\n", asdf))
-
-struct		vbuf	{ // Interface for automatic string memory managment
+struct		vbuf	{// vector buffers grow with xrealloc
   char		*buf;
   size_t	len;
   size_t	alloc;
 };
 
 /*
-** Data for pattern and holdspace. (encapsulation for vbuf)
-** We always maintain at least one line of lookahead (nextLine),
-** to tell if $ address matches active.
+** Data for pattern and holdspace. extended vbuf, since
+** we must be able to call regexec on an entire line.
+** $ address is tricky, and must be handled on the fly
 */
-struct			lineList	{  // Data for fast line deletion and append.
+struct			lineList	{
   char			*buf;
   size_t		alloc;
   char			*active;
   size_t		len;
-  struct vbuf	*lookahead;
+  struct vbuf		*lookahead;
 };
 
 struct sedRegex	{
@@ -69,7 +77,7 @@ struct sedRegex	{
 };
 
 enum sedAddrType	{
-  ADDR_NONE, // for cmdaddresses like '1,' and ',9'
+  ADDR_NONE, // allow cmd adresses like '1,' and ',9'
   ADDR_LINE,
   ADDR_END, // '$'
   ADDR_REGEX,
@@ -83,49 +91,43 @@ struct			sedAddr	{
   }			info;
 };
 
-enum sedCmdAddrType	{ // struct sedCmdAddr: do we use a1, a2, step ?
+enum sedCmdAddrType	{ // do we use a1, a2, step ?
   CMD_ADDR_DONE,  // address will never match again
   CMD_ADDR_LINE, // use only a1
   CMD_ADDR_RANGE, // use a1, a2 
   CMD_ADDR_STEP, // use a1, a2, step
 };
 
-struct			sedCmdAddr	{ // this must handle one or two sedAddr, steps (~) and non_matches ('!').
-  unsigned		bang:	1; 	// cmd applies to non-matches
+struct			sedCmdAddr	{
+// handle 1 or 2 sedAddr, steps '~' and non_matches '!'.
+  unsigned		bang:	1; // '!'
   enum sedCmdAddrType	type;
   struct sedAddr	a1, a2;
   size_t		step;
 };
 
-struct			sedLabel	{
-  char			*name;
-  int			pos;
-  struct sedLabel	*next;
-};
-
 struct 			sedCmd	{
-  struct sedCmdAddr	*addr; // NULL to match unconditionally
+  struct sedCmdAddr	*addr; // NULL matches unconditionally
   char			cmdChar;
   union		{
     struct SCmd		*s;
     char		*y;
-    struct vbuf	*text; // For a, i commands
+    struct vbuf		*text; // For a, i, c commands
     int			int_arg;
     FILE		*file;
+    struct sedProgram	*jmp;
   }			info;
 };
 
-struct			sedProgram	{ // List of struct sedCmds
-  struct sedCmd		*cmdStack;
-  int			len;
-  int			pos;
+/* 
+** a sedProgram is a circular list of sedCmds in an obstack -
+** to reduce pagefaults, fragmentation and del cmds quick
+** 'first' contains no cmd info 
+*/
+struct			sedProgram	{
+  struct sedProgram	*next;
+  struct sedCmd		cmd;
 };
-
-struct 			sedInput	{ // Used for reading in prog
-  char			*str;		// If null, read from file. both must not be null.
-  FILE			*file;
-  int			line;		// For meaningful error messages
-}			g_progInput;
 
 /* 
 ** concatenate recipe to create the replacement.
@@ -156,6 +158,8 @@ struct vbuf	*vbuf_new();
 ssize_t	vbuf_getline(struct vbuf *text, FILE *in);
 struct vbuf	*read_text();
 struct vbuf	*snarf(char delim);
+struct vbuf	*vbuf_readName();
+char		*vbuf_tostring(struct vbuf *);
 
 struct lineList	*lineList_new();
 void		lineList_appendText(struct lineList *l, char *text, int len);
@@ -165,6 +169,6 @@ void		lineList_deleteLine(struct lineList *l, FILE *out);
 
 struct sedProgram	*compile_file(struct sedProgram *compile, const char *f_name);
 struct sedProgram	*compile_string(struct sedProgram *compile, char *str);
-char	exec_stream(struct sedProgram *prog, int ac, char **files);
+char	exec_stream(struct sedProgram *prog, char **files);
 
 #endif // ifndef DATA_H_

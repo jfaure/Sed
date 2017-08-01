@@ -34,6 +34,7 @@ struct			vbuf	*read_text()
       return (text);
     else
       vbuf_addChar(text, c);
+  vbuf_addChar(text, 0);
   return (text);
 }
 
@@ -56,9 +57,9 @@ ssize_t			vbuf_getline(struct vbuf *text, FILE *in)
 struct vbuf		*snarf(char delim)
 {
   char			in;
-  struct vbuf	*text;
+  struct vbuf		*text;
 
-  printf("snarf delim %c\n", delim);
+  DBcompile("snarf delim %c\n", delim);
   text = vbuf_new();
   while ((in = nextChar()) != delim)
     if (in == EOF)
@@ -70,4 +71,36 @@ struct vbuf		*snarf(char delim)
       vbuf_addChar(text, in);
   vbuf_addChar(text, 0);
   return (text);
+}
+
+struct vbuf		*vbuf_readName()
+{
+  char			in;
+  struct vbuf		*text;
+
+  text = vbuf_new();
+  while (isblank(in = nextChar()))
+    ;
+  while (in && in != '\n' && in != EOF)
+  {
+    vbuf_addChar(text, in);
+    in = nextChar();
+  }
+  vbuf_addChar(text, 0);
+  if (text->len == 0)
+  {
+    vbuf_free(text);
+    return (NULL);
+  }
+  vbuf_addChar(text, 0);
+  return (text);
+}
+
+char		*vbuf_tostring(struct vbuf *vbuf)
+{
+  char		*r;
+
+  r = vbuf->buf;
+  vbuf_free(vbuf);
+  return (r);
 }
