@@ -3,18 +3,14 @@
 
 int			g_lineCount;
 
-bool			match_regex(struct sedRegex *r, char const *line)
-{
-  return (0 == regexec(&r->compile, line, 0, NULL, r->flags));
-}
-
 bool			match_address(addr, pattern, line)
   struct sedAddr *addr; struct lineList *pattern; int line;
 {
   return ((addr->type == ADDR_NONE 
     || addr->type == ADDR_LINE  && line == addr->info.line
     || addr->type == ADDR_END   && !pattern->lookahead
-    || addr->type == ADDR_REGEX && match_regex(&addr->info.regex, pattern->active)));
+    || addr->type == ADDR_REGEX
+    && !regexec(&addr->info.regex, pattern->active, 0, NULL, 0)));
 }
 
 bool			match_addressRange(addr, pattern, line)
@@ -78,7 +74,7 @@ struct lineList		*lineList_new()
 
   l = xmalloc(sizeof(*l));
   l->active = l->buf = xmalloc(l->alloc = 256);
-  l->buf[l->len = 0] = 0;;
+  l->buf[l->len = 0] = 0;
   l->lookahead = vbuf_new();
   return (l);
 }
@@ -133,7 +129,7 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
   char		**recipe;
 
   new->len = 0;
-  for (recipe = s->new.recipe; *recipe != (char *) -1; ++recipe)
+  for (recipe = s->new.recipe; *recipe != (char *) -1; ++recipe) // \n\n breaks '$'
     if ((long) *recipe < 10)
     {
       vbuf_addString(new, cursor + pmatch[(long) *recipe].rm_so,
@@ -141,8 +137,7 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
     }
     else
       vbuf_addString(new, *recipe, strlen(*recipe));
-  vbuf_addChar(new, 0);
-  --new->len;
+  vbuf_addNull(new);
   return (new);
 }
 
@@ -157,18 +152,21 @@ char			exec_s(struct SCmd *s, struct lineList *pattern)
   cursor = pattern->active;
   subs = 0;
   do {
- //   printf("s: cursor: %s\n", cursor);
-    if (regexec(&s->pattern.compile, cursor, 10, pmatch, 0)) {
+    if (regexec(&s->pattern, cursor, 10, pmatch, 0)) {
       vbuf_free(new);
       break;
     }
     ++subs;
     new = resolve_backrefs(new, s, pmatch, cursor);
-    diff = pattern->len - (cursor + pmatch[0].rm_so - pattern->buf);
+    diff = pattern->len - (cursor - pattern->buf + pmatch[0].rm_so);
+    if (diff > pattern->len)
+    {
+    }
+    assert(diff > 0);
     memmove(cursor + pmatch[0].rm_so + new->len, cursor + pmatch[0].rm_eo, diff);
     memmove(cursor + pmatch[0].rm_so, new->buf, new->len);
-    pattern->len += diff = new->len - (pmatch[0].rm_eo - pmatch[0].rm_so);
-    cursor += diff + pmatch[0].rm_so + 1;
+    pattern->len += new->len - (pmatch[0].rm_eo - pmatch[0].rm_so);
+    cursor += pmatch[0].rm_so + new->len;
   } while ((const char) s->g && *cursor);
   return (subs); // has a substitution been made
 }
@@ -177,7 +175,7 @@ char			exec_file(struct sedProgram *prog, FILE *in, FILE *out)
 { 
   struct sedProgram		*first;
   static struct lineList 	*pattern, *hold;
-  static char	lastsub;
+  static char			lastsub;
   struct sedCmd			*cmd;
 
   first = prog;
@@ -186,43 +184,40 @@ char			exec_file(struct sedProgram *prog, FILE *in, FILE *out)
   {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
       if (!cmd->addr || match_cmdAddress(cmd->addr, pattern, g_lineCount))
-      {
-	switch (cmd->cmdChar)
-	{
-	  case '#': break;
-	  case '=': fprintf(out, "%d\n", g_lineCount); fflush(out); break;
-	  case 'a': append_queue(cmd->info.text, out); break;
-	  case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
-	  case 'q': lineList_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
-	  case 'Q': return (cmd->info.int_arg);
-	  case 'r':
-	  case 'R':
-	  case 'b': 0; continue;
-	  case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
-	  case 'd': lineList_deleteLine(pattern, NULL); break;
-	  case 'D': lineList_deleteEmbeddedLine(pattern, NULL); break;
-	  case 'h': lineList_deleteLine(hold, 0); lineList_appendLineList(hold, pattern); break;
-	  case 'H': lineList_appendLineList(hold, pattern); break;
-	  case 'g': lineList_deleteLine(pattern, 0);lineList_appendLineList(pattern, hold);break;
-	  case 'G': lineList_appendLineList(pattern, hold); break;
-	  case 'l':
-	  case 'n': lineList_readLine(pattern, in); continue;
-	  case 'N': lineList_readLine(pattern, in); break;
-	  case 'p': lineList_deleteLine(pattern, out); break;
-	  case 'P': lineList_deleteEmbeddedLine(pattern, out); break;
-	  case 's': lastsub = exec_s(cmd->info.s, pattern); break;
-	  case 't': lastsub && (0);
-		    lastsub = 0; break;
-	  case 'T': lastsub || (0);
-		    lastsub = 0; break;
-	  case 'w':
-	  case 'W':
-	  case 'x':
-	  case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
-		      cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
-	  default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);
+	switch (cmd->cmdChar) {
+	case '#': case ':': break;
+        case '=': fprintf(out, "%d\n", g_lineCount); fflush(out); break;
+        case 'a': append_queue(cmd->info.text, out); break;
+        case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
+        case 'q': lineList_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
+        case 'Q': return (cmd->info.int_arg);
+        case 'r':
+        case 'R':
+        case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
+        case 'd': lineList_deleteLine(pattern, NULL); break;
+        case 'D': lineList_deleteEmbeddedLine(pattern, NULL); break;
+        case 'h': lineList_deleteLine(hold, 0);
+	          lineList_appendLineList(hold, pattern); break;
+        case 'H': lineList_appendLineList(hold, pattern); break;
+        case 'g': lineList_deleteLine(pattern, 0);
+	          lineList_appendLineList(pattern, hold);break;
+        case 'G': lineList_appendLineList(pattern, hold); break;
+        case 'l':
+        case 'n': lineList_readLine(pattern, in); continue;
+        case 'N': lineList_readLine(pattern, in); break;
+        case 'p': lineList_deleteLine(pattern, out); break;
+        case 'P': lineList_deleteEmbeddedLine(pattern, out); break;
+        case 's': lastsub = exec_s(cmd->info.s, pattern); break;
+ 	case 'b': prog = cmd->info.jmp; continue; // if no jmp address ?
+        case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;
+        case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; continue;
+        case 'w':
+        case 'W':
+        case 'x':
+        case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
+	            cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
+        default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);
 	}
-      }
 end:
     lineList_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
     append_queue(0, out); // flush append_queue;

@@ -16,11 +16,22 @@ extern inline void		vbuf_free(struct vbuf *t)
   free(t);
 }
 
-void		vbuf_addChar(struct vbuf *text, char c)
+static void vbuf_testSpace(struct vbuf *text)
 {
   if (text->len == text->alloc)
     text->buf = xrealloc(text->buf, text->alloc <<= 1);
+}
+
+void		vbuf_addChar(struct vbuf *text, char c)
+{
+  vbuf_testSpace(text);
   text->buf[text->len++] = c;
+}
+
+void		vbuf_addNull(struct vbuf *text)
+{
+  vbuf_testSpace(text);
+  text->buf[text->len] = 0;
 }
 
 struct			vbuf	*read_text()
@@ -51,7 +62,10 @@ void			vbuf_addString(struct vbuf *text, char *s, int len)
 
 ssize_t			vbuf_getline(struct vbuf *text, FILE *in)
 {
-  return ((text->len = getline(&text->buf, &text->alloc, in)));
+  text->len = getline(&text->buf, &text->alloc, in);
+  if (text->len > 0)
+    text->buf[--text->len] = 0;
+  return (text->len);
 }
 
 struct vbuf		*snarf(char delim)

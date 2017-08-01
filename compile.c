@@ -13,6 +13,7 @@ char	nextProgStream()
   if (g_in.next && g_in.next->filename) // then try to read another line
   {
     g_in.next->file || (g_in.next->file = xfopen(g_in.next->filename, "r"));
+    g_in.next->alloc = 0;
     if (getline(&g_in.next->buf, &g_in.next->alloc, g_in.next->file) != -1)
     {
       g_in.cursor = g_in.next->buf;
@@ -38,6 +39,7 @@ void			prog_addScript(char *str, char *filename)
   last->next = 0;
   last->buf = str;
   last->filename = filename;
+  last->file = 0;
   last->alloc = 0;
   g_in.cursor = g_in.next->buf;
 }
@@ -49,17 +51,15 @@ int	nextNumber(char c)
 {
   int	r;
 
-  if (!isdigit(c))
-    return (0);
-  r = c - '0';
-  while (isdigit(c = nextChar()))
-    r = r * 10 + c - '0';
+  r = 0; 
+  while (isdigit(c))
+    r = r * 10 + c - '0', c = nextChar();
   prevChar(c);
   return (r);
 }
 
 
-char			compile_address_regex(struct sedRegex *regex, char delim, int cflags)
+char			compile_address_regex(regex_t *regex, char delim, int cflags)
 {
   char			in;
   struct vbuf	*text;
@@ -68,7 +68,7 @@ char			compile_address_regex(struct sedRegex *regex, char delim, int cflags)
   text = snarf(delim);
   if (!text)
     bad_cmd('/');
-  regcomp(&regex->compile, text->buf, regex->flags = cflags);
+  regcomp(regex, text->buf, cflags);
   vbuf_free(text);
   return (0);
 }
@@ -156,6 +156,7 @@ char	get_s_options(struct SCmd *s)
   char	cflags, delim;
 
   cflags = REG_EXTENDED * g_sedOptions.extended_regex_syntax;
+  s->g = s->p = s->e = s->d = s->number = cflags = 0; s->w = NULL;
   while ((delim = nextChar()) && delim != '\n' && delim != ';' && delim != EOF)
     switch (delim)
     {
@@ -177,18 +178,16 @@ char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
   new->recipe = xmalloc(sizeof(*new->recipe) * (len = 10));
   i = 0;
   new->recipe[i++] = replace;
-  while (*replace)
-    if (*replace == '\\' || *replace == '&')
+  for (; *replace; ++replace)
+    if (*replace == '&')
+      new->recipe[i++] = 0, *replace = 0;
+    else if (*replace == '\\')
     {
-      if (*replace == '&')
-	new->recipe[i++] = 0;
-      else if (*++replace >= '0' && *replace <= '9')
+      *replace = 0;
+      if (*++replace >= '0' && *replace <= '9')
 	new->recipe[i++] = (char *)(long) *replace - '0';
-      else panic("bad s command syntax");
-      *replace++ = 0;
+      else panic("s backref: expected number, got '%c'", *replace);
     }
-    else
-      ++replace;
   new->recipe[i] = (char *) -1; // mark end of recipe
   return (new->recipe);
 }
@@ -201,7 +200,6 @@ struct SCmd 		*compile_s()
   int			cflags;
 
   s = xmalloc(sizeof(*s));
-  s->g = s->p = s->e = s->d = s->number = cflags = 0; s->w = NULL;
   delim = nextChar();
   delim == '\\' && (delim = nextChar());
   if (!(regex = snarf(delim)) || !(replace = snarf(delim)))
@@ -211,7 +209,7 @@ struct SCmd 		*compile_s()
   s->new.n_refs = replace->len;
   s->new.recipe = S_backrefs(s, &s->new, s->new.text);
   free(replace);
-  regcomp(&s->pattern.compile, regex->buf, cflags);
+  regcomp(&s->pattern, regex->buf, cflags);
   vbuf_free(regex);
   return (s);
 }
@@ -287,7 +285,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
       case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
       case 'd': case 'D': case 'h': case 'H': case 'g': case 'G': case 'x':
       case 'l': case 'n': case 'N': case 'p': case 'P': case '=': break;
-      case ':': do_label(prog, NULL); continue;
+      case ':': do_label(prog, NULL); break;
       case 'b': case 't': case 'T': do_label(NULL, prog); break;
       case 's': cmd->info.s = compile_s(); break;
       case 'y': compile_y(cmd); break;

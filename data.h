@@ -54,8 +54,8 @@ struct		zbuf	{
 
 struct		vbuf	{// vector buffers grow with xrealloc
   char		*buf;
-  size_t	len;
-  size_t	alloc;
+  ssize_t	len;
+  ssize_t	alloc;
 };
 
 /*
@@ -71,11 +71,6 @@ struct			lineList	{
   struct vbuf		*lookahead;
 };
 
-struct sedRegex	{
-  regex_t	compile;
-  int		flags;
-};
-
 enum sedAddrType	{
   ADDR_NONE, // allow cmd adresses like '1,' and ',9'
   ADDR_LINE,
@@ -87,7 +82,7 @@ struct			sedAddr	{
   enum sedAddrType	type; // basically regex or line_no
   union	{
     int			line;
-    struct sedRegex	regex;
+    regex_t		regex;
   }			info;
 };
 
@@ -140,7 +135,7 @@ struct SReplacement		{
 };
 
 struct			SCmd	{
-  struct sedRegex	pattern;
+  regex_t		pattern;
   struct SReplacement	new;
   unsigned		g:	1;
   unsigned		p:	1;
