@@ -101,6 +101,6 @@ char		*vbuf_tostring(struct vbuf *vbuf)
   char		*r;
 
   r = vbuf->buf;
-  vbuf_free(vbuf);
+  free(vbuf);
   return (r);
 }

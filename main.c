@@ -73,5 +73,6 @@ int	main(int ac, char **av)
       usage(1);
   compile_program(&prog);
   fputs("-----------------------------\n", stdout);
-  return (exec_stream(&prog, av + optind));
+  opt = exec_stream(&prog, av + optind);
+  return (opt);
 }

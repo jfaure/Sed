@@ -219,7 +219,7 @@ struct SCmd 		*compile_s()
 void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 {
   static struct obstack obstack;
-  static struct nameList {
+  static struct nameList { // private type
     char 			*name;
     struct nameList 		*next;
     struct sedProgram		*pos;
@@ -261,7 +261,7 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 
 struct sedProgram	*compile_program(struct sedProgram *const first)
 {
-  struct obstack	obstack;
+  static struct obstack	obstack;
   struct sedProgram	*prog;
   struct sedCmd		*cmd;
   struct sedCmdAddr	*save_addr; // for cmd groups '{' '}'
@@ -277,7 +277,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     switch (cmd->cmdChar) // Use switch as dispatch table
     {
       case 0:   cmd->cmdChar = '#'; cmd = 0; goto finish; // only way out
-      case '#': vbuf_free(vbuf_readName); continue;
+      case '#': vbuf_free(vbuf_readName()); continue;
       case EOF: bad_prog("Missing command for address");
       case '{': save_addr = cmd->addr; break;
       case '}': save_addr = NULL; break;
