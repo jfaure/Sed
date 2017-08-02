@@ -209,7 +209,7 @@ char			exec_file(struct sedProgram *prog, FILE *in, FILE *out)
 	          lineList_appendLineList(pattern, hold);break;
         case 'G': lineList_appendLineList(pattern, hold); break;
         case 'l':
-        case 'n': lineList_readLine(pattern, in); continue;
+        case 'n': lineList_deleteLine(pattern, out); lineList_readLine(pattern, in); continue;
         case 'N': lineList_readLine(pattern, in); break;
         case 'p': lineList_deleteLine(pattern, out); break;
         case 'P': lineList_deleteEmbeddedLine(pattern, out); break;

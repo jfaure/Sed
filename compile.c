@@ -3,29 +3,30 @@
 
 /*
 ** Prepare next file/string for nextChar()
-** should allow for stuff like sed -e i -f <(echo insertthis)
+** this implementation allows for stuff like sed -e i\ -f <(echo insertthis)
+** inserts '\n' between input streams
 */
 char	nextProgStream()
 { DBcompile("nextProgStream\n");
-  if (!g_in.next)
+  if (!g_in.info)
     return EOF;
   g_in.cursor && (g_in.last = g_in.cursor[-1]);
-  if (g_in.next && g_in.next->filename) // then try to read another line
+  if (g_in.info && g_in.info->filename) // then try to read another line
   {
-    g_in.next->file || (g_in.next->file = xfopen(g_in.next->filename, "r"));
-    g_in.next->alloc = 0;
-    if (getline(&g_in.next->buf, &g_in.next->alloc, g_in.next->file) != -1)
+    g_in.info->file || (g_in.info->file = xfopen(g_in.info->filename, "r"));
+    g_in.info->alloc = 0;
+    if (getline(&g_in.info->buf, &g_in.info->alloc, g_in.info->file) != -1)
     {
-      g_in.cursor = g_in.next->buf;
-      return (nextChar());
+      g_in.cursor = g_in.info->buf;
+      return ('\n');
     }
-  fclose(g_in.next->file);
+  fclose(g_in.info->file);
   }
-  struct zbuflist *t = g_in.next; g_in.next = g_in.next->next; free(t);
-  if (!g_in.next)
+  struct zbuflist *t = g_in.info; g_in.info = g_in.info->next; free(t);
+  if (!g_in.info)
     return (EOF);
   puts("new script file");
-  return ((g_in.cursor = g_in.next->buf) ? nextChar() : nextProgStream());
+  return ((g_in.cursor = g_in.info->buf) ? '\n' : nextProgStream());
 }
 
 void			prog_addScript(char *str, char *filename)
@@ -33,7 +34,7 @@ void			prog_addScript(char *str, char *filename)
   static struct zbuflist	*last = 0;
   DBcompile("adding script");
   if (!last)
-    last = g_in.next = xmalloc(sizeof(*last));
+    last = g_in.info = xmalloc(sizeof(*last));
   else
     last = last->next = xmalloc(sizeof(*last));
   last->next = 0;
@@ -41,7 +42,7 @@ void			prog_addScript(char *str, char *filename)
   last->filename = filename;
   last->file = 0;
   last->alloc = 0;
-  g_in.cursor = g_in.next->buf;
+  g_in.cursor = g_in.info->buf;
 }
 
 void	bad_prog(char const *why) { fprintf(stderr, why); exit(1); } 
@@ -54,6 +55,7 @@ int	nextNum(char *c)
   r = 0; 
   while (isdigit(*c))
     r = r * 10 + *c - '0', *c = nextChar();
+  prevChar(*c);
   return (r);
 }
 
@@ -94,9 +96,10 @@ bool			compile_address(struct sedAddr *addr, char in)
   }
   return (true);
 }
- 
+
+// sets cmd address and returns the command char 
 char			compile_cmd_address(struct sedCmd *cmd)
-{ // returns cmd->cmdChar, and sets cmd->addr.
+{
   char			in;
 
   cmd->addr = xmalloc(sizeof(*cmd->addr));
@@ -138,7 +141,7 @@ void			compile_y(struct sedCmd *cmd)
     panic("unterminated y command");
   if (a->len != b->len)
     panic("strings for 'y' command are different lengths");
-  memset(cmd->info.y = xmalloc(256), 0, 256); // use trivial hash
+  memset(cmd->info.y = xmalloc(256), 0, 256); // trivial hash
   for (t = 0; ++t; t < a->len)
     if (cmd->info.y[t] != 0)
       panic("y: %c is already mapped to %c", a[t], b[t]);
@@ -273,8 +276,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
       case '{': save_addr = cmd->addr; 					break;
       case '}': save_addr = NULL; 					break;
       case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
-      case 'q': case 'Q':  cmd->cmdChar = nextChar();
-			   cmd->info.int_arg = nextNum(&cmd->cmdChar);	break;
+      case 'q': case 'Q': break;
       case 'r': case 'R':
       case 'w': case 'W': cmd->info.text = vbuf_readName(); 		break;
       case 'd': case 'D': case 'h': case 'H': case 'g': case 'G': case 'x':

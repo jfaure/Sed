@@ -30,15 +30,10 @@ struct		sedOptions	{
   unsigned	extended_regex_syntax:	1;
 } 		g_sedOptions;
 
-char asdf;
-#define nextChar() ((asdf = *g_in.cursor == 0 ? \
-      nextProgStream() : *g_in.cursor++) \
-    + !DBcompile("nextChar '%c'\n", asdf))
+#define nextChar() (*g_in.cursor == 0 ? \
+      nextProgStream() : *g_in.cursor++)
 
-#define prevChar(c) assert(asdf = \
-    g_in.cursor >= g_in.next->buf ? \
-    *g_in.cursor : g_in.last\
-    + !DBcompile("prevChar '%c'\n", asdf))
+#define prevChar(c) *--g_in.cursor // not 100% safe
 
 struct		zbuf	{
   char		*cursor;
@@ -49,7 +44,7 @@ struct		zbuf	{
     char		*filename;
     FILE		*file;
     struct zbuflist	*next;
-  }		*next;
+  }		*info;
 }		g_in;
 
 struct		vbuf	{// vector buffers grow by xrealloc
@@ -59,9 +54,8 @@ struct		vbuf	{// vector buffers grow by xrealloc
 };
 
 /*
-** Data for pattern and holdspace. extended vbuf, since
-** we must be able to call regexec on an entire line.
-** $ address is tricky, and must be handled on the fly
+** Data for pattern and holdspace - contiguous in memory,
+** since we must sometimes call regexec on the entire region.
 */
 struct			lineList	{
   char			*buf;
@@ -71,32 +65,31 @@ struct			lineList	{
   struct vbuf		*lookahead;
 };
 
-enum sedAddrType	{
-  ADDR_NONE, // allow cmd adresses like '1,' and ',9'
-  ADDR_LINE,
-  ADDR_END, // '$'
-  ADDR_REGEX,
-};
+/* 
+** ----------- Compiled Script datatypes -----------
+*/
 
-struct			sedAddr	{
-  enum sedAddrType	type; // basically regex or line_no
+struct			sedAddr	{ // supports sedCmdAddr
+  enum sedAddrType	{
+    ADDR_NONE, // allow cmd adresses like '1,' and ',9'
+    ADDR_LINE,
+    ADDR_END, // '$'
+    ADDR_REGEX,
+  }			type;
   union	{
     int			line;
     regex_t		regex;
   }			info;
 };
 
-enum sedCmdAddrType	{ // do we use a1, a2, step ?
-  CMD_ADDR_DONE,  // address will never match again
-  CMD_ADDR_LINE, // use only a1
-  CMD_ADDR_RANGE, // use a1, a2 
-  CMD_ADDR_STEP, // use a1, a2, step
-};
-
 struct			sedCmdAddr	{
-// handle 1 or 2 sedAddr, steps '~' and non_matches '!'.
+  enum sedCmdAddrType	{ // do we use a1, a2, step ?
+    CMD_ADDR_DONE,  // address will never match again
+    CMD_ADDR_LINE, // use only a1
+    CMD_ADDR_RANGE, // use a1, a2 
+    CMD_ADDR_STEP, // use a1, a2, step
+  } 			type;
   unsigned		bang:	1; // '!'
-  enum sedCmdAddrType	type;
   struct sedAddr	a1, a2;
   size_t		step;
 };
@@ -128,9 +121,10 @@ struct			sedProgram	{
 ** ----------- S command -----------
 ** concatenate recipe to create the replacement:
 ** pointer values of 0 to 9 are backreferences,
-** other values point somewhere in 'text' and
-** (char *) -1 ends the recipe 
-** Note: these values should never overlap malloc()'d memory 
+** (char *) -1 ends the recipe,
+** and other values point somewhere in 'text'.
+** Note: the lowest and highest addresses should never
+** overlap malloc()'d memory,
 ** they are reserved for the kernel or other purposes
 */
 struct SReplacement		{
@@ -142,6 +136,7 @@ struct SReplacement		{
 struct			SCmd	{
   regex_t		pattern;
   struct SReplacement	new;
+  // - options -
   unsigned		g:	1;
   unsigned		p:	1;
   unsigned		e:	1;

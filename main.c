@@ -66,13 +66,12 @@ int	main(int ac, char **av)
       case 'e': prog_addScript(optarg, NULL); break;
       default:  usage(4);
     }
-  if (!g_in.next)
+  if (!g_in.info) // no -e or -f scripts
     if (optind < ac)
       prog_addScript(av[optind++], NULL);
     else
       usage(1);
   compile_program(&prog);
-  fputs("-----------------------------\n", stdout);
   opt = exec_stream(&prog, av + optind);
   return (opt);
 }

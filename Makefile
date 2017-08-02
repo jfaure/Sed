@@ -1,5 +1,20 @@
+NAME		=	sed
+CFLAGS		=	-ggdb3
 WUSELESS	=	-Wno-implicit-function-declaration 
-OBJ		= 	main.c compile.c exec.c vbuf.c
+SRC		= 	main.c compile.c exec.c vbuf.c
+OBJDIR		=	obj
+OBJ		=	$(SRC:%.c=$(OBJDIR)/%.o)
 
-all:
-	gcc $(WUSELESS) -ggdb3 -o sed $(OBJ)
+all:	$(NAME)
+
+$(NAME): $(OBJ) | $(OBJDIR)
+	gcc -o $@ $(CFLAGS) $(WUSELESS) $^
+
+$(OBJ): obj/%.o : %.c data.h
+	  gcc -o $@ $(CFLAGS) $(WUSELESS) -c $<
+
+$(OBJDIR):
+	-mkdir $@
+
+clean:
+	rm -rf $(OBJDIR) $(NAME)
