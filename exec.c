@@ -1,5 +1,4 @@
 #include "data.h"
-#define LINE_LEN 128 
 
 int			g_lineCount;
 
@@ -37,14 +36,18 @@ bool			match_addressStep(addr, pattern, line)
 {
 }
 
-bool			match_cmdAddress(addr, pattern, line)
-    struct sedCmdAddr *addr; struct lineList *pattern; int line; 
+// Wil incidentally remove dead addresses from the program
+bool			match_cmdAddress(prog, addr, pattern, line)
+    struct sedProgram *prog; struct sedCmdAddr *addr; struct lineList *pattern; int line; 
 {
+  bool			match;
+
   return (addr->bang != 
       (addr->type == CMD_ADDR_DONE
       || addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern, line)
       || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern, line)
       || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern, line)));
+  return (addr->bang += match);
 }
 
 void	append_queue(struct vbuf *text, FILE *out)
@@ -161,11 +164,9 @@ char			exec_s(struct SCmd *s, struct lineList *pattern)
     diff = pattern->len - (cursor - pattern->buf + pmatch[0].rm_so);
     while (2 + diff > pattern->alloc - pattern->len)
     {
-      pattern->active -= (long) pattern->buf;
-      cursor -= (long) pattern->buf;
+      pattern->active -= (long) pattern->buf; cursor -= (long) pattern->buf;
       pattern->buf = xrealloc(pattern->buf, pattern->alloc <<= 1);
-      pattern->active += (long) pattern->buf;
-      cursor += (long) pattern->buf;
+      pattern->active += (long) pattern->buf; cursor += (long) pattern->buf;
     }
     assert(diff > 0);
     memmove(cursor + pmatch[0].rm_so + new->len, cursor + pmatch[0].rm_eo, diff);
@@ -188,7 +189,7 @@ char			exec_file(struct sedProgram *prog, FILE *in, FILE *out)
   while (lineList_readLine(pattern, in) == true)
   {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
-      if (!cmd->addr || match_cmdAddress(cmd->addr, pattern, g_lineCount))
+      if (!cmd->addr || match_cmdAddress(prog, cmd->addr, pattern, g_lineCount))
 	switch (cmd->cmdChar) {
 	case '#': case ':': break;
         case '=': fprintf(out, "%d\n", g_lineCount); fflush(out); break;

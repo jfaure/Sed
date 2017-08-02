@@ -47,17 +47,15 @@ void			prog_addScript(char *str, char *filename)
 void	bad_prog(char const *why) { fprintf(stderr, why); exit(1); } 
 void	bad_cmd(char cmd) { fprintf(stderr, "Unknown Command: %c", cmd); exit(1); }
 
-int	nextNumber(char c)
+int	nextNum(char *c)
 {
   int	r;
 
   r = 0; 
-  while (isdigit(c))
-    r = r * 10 + c - '0', c = nextChar();
-  prevChar(c);
+  while (isdigit(*c))
+    r = r * 10 + *c - '0', *c = nextChar();
   return (r);
 }
-
 
 char			compile_address_regex(regex_t *regex, char delim, int cflags)
 {
@@ -79,7 +77,7 @@ bool			compile_address(struct sedAddr *addr, char in)
   if (isdigit(in))
   {
     addr->type = ADDR_LINE;
-    addr->info.line = nextNumber(in);
+    addr->info.line = nextNum(&in);
   }
   else if (in == '$')
     addr->type = ADDR_END;
@@ -120,13 +118,12 @@ char			compile_cmd_address(struct sedCmd *cmd)
   else if (in == '~')
   {
     cmd->addr->type = CMD_ADDR_STEP;
-    cmd->addr->step = nextNumber(nextChar());
+    in = nextChar();
+    cmd->addr->step = nextNum(&in);
+    return (in);
   }
   else
-  {
     cmd->addr->type = CMD_ADDR_LINE;
-    return (nextChar());
-  }
   return (nextChar());
 }
 
@@ -142,10 +139,9 @@ void			compile_y(struct sedCmd *cmd)
   if (a->len != b->len)
     panic("strings for 'y' command are different lengths");
   memset(cmd->info.y = xmalloc(256), 0, 256); // use trivial hash
-  t = -1;
-  while (++t < a->len)
+  for (t = 0; ++t; t < a->len)
     if (cmd->info.y[t] != 0)
-      panic("%c is already mapped to %c", a[t], b[t]);
+      panic("y: %c is already mapped to %c", a[t], b[t]);
     else
       cmd->info.y[(int) a->buf[t]] = b->buf[t];
   vbuf_free(a); vbuf_free(b);
@@ -243,16 +239,13 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
   }
   else // finished, connect all jumps
   {
-    while (jumps)
-    {
+    for ( ; jumps; jumps = jumps->next)
       for (tmp = labels; tmp; tmp = tmp->next)
 	if (!strcmp(tmp->name, jumps->name))
 	{
 	  jumps->pos->cmd.info.jmp = tmp->pos; 
 	  break;
 	}
-      jumps = jumps->next;
-    }
     obstack_free(&obstack, NULL);
   }
 }
@@ -274,22 +267,23 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     cmd->cmdChar && DBcompile("compiling %d(%c)\n", cmd->cmdChar, cmd->cmdChar);
     switch (cmd->cmdChar) // Use switch as dispatch table
     {
-      case 0:   cmd->cmdChar = '#'; cmd = 0; goto finish; // only way out
-      case '#': vbuf_free(vbuf_readName()); continue;
+      case 0:   cmd->cmdChar = '#'; cmd = 0; 		goto finish; // only way out
+      case '#': vbuf_free(vbuf_readName()); 				continue;
       case EOF: bad_prog("Missing command for address");
-      case '{': save_addr = cmd->addr; break;
-      case '}': save_addr = NULL; break;
-      case 'a': case 'i': case 'c': cmd->info.text = read_text(); break;
-      case 'q': case 'Q': cmd->info.int_arg = nextNumber(nextChar()); break;
+      case '{': save_addr = cmd->addr; 					break;
+      case '}': save_addr = NULL; 					break;
+      case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
+      case 'q': case 'Q':  cmd->cmdChar = nextChar();
+			   cmd->info.int_arg = nextNum(&cmd->cmdChar);	break;
       case 'r': case 'R':
-      case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
+      case 'w': case 'W': cmd->info.text = vbuf_readName(); 		break;
       case 'd': case 'D': case 'h': case 'H': case 'g': case 'G': case 'x':
-      case 'l': case 'n': case 'N': case 'p': case 'P': case '=': break;
-      case ':': do_label(prog, NULL); break;
-      case 'b': case 't': case 'T': do_label(NULL, prog); break;
-      case 's': cmd->info.s = compile_s(); break;
-      case 'y': compile_y(cmd); break;
-      default: DBcompile("main loop:");bad_cmd(cmd->cmdChar);
+      case 'l': case 'n': case 'N': case 'p': case 'P': case '=': 	break;
+      case ':': do_label(prog, NULL); 					break;
+      case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
+      case 's': cmd->info.s = compile_s(); 				break;
+      case 'y': compile_y(cmd); 					break;
+      default: bad_cmd(cmd->cmdChar);
     }
     prog = prog->next = obstack_alloc(&obstack, sizeof(*prog)); // 'continue' skips this
   }

@@ -52,7 +52,7 @@ struct		zbuf	{
   }		*next;
 }		g_in;
 
-struct		vbuf	{// vector buffers grow with xrealloc
+struct		vbuf	{// vector buffers grow by xrealloc
   char		*buf;
   ssize_t	len;
   ssize_t	alloc;
@@ -110,14 +110,14 @@ struct 			sedCmd	{
     struct vbuf		*text; // For a, i, c commands
     int			int_arg;
     FILE		*file;
-    struct sedProgram	*jmp;
+    struct sedProgram	*jmp; // 'b' 't' 'T' cmds
   }			info;
 };
 
 /* 
 ** a sedProgram is a circular list of sedCmds in an obstack -
-** to reduce pagefaults, fragmentation and del cmds quick
-** 'first' contains no cmd info 
+** to reduce pagefaults and fragmentation, and del cmds quick
+** first entry contains no cmd info 
 */
 struct			sedProgram	{
   struct sedProgram	*next;
@@ -125,13 +125,18 @@ struct			sedProgram	{
 };
 
 /* 
-** concatenate recipe to create the replacement.
-** pointer values 0 to 9 are backreferences
+** ----------- S command -----------
+** concatenate recipe to create the replacement:
+** pointer values of 0 to 9 are backreferences,
+** other values point somewhere in 'text' and
+** (char *) -1 ends the recipe 
+** Note: these values should never overlap malloc()'d memory 
+** they are reserved for the kernel or other purposes
 */
 struct SReplacement		{
   char			*text; //private reference string
   size_t 		n_refs;
-  char			**recipe; //parts of text, backrefs
+  char			**recipe;
 };
 
 struct			SCmd	{
@@ -140,10 +145,15 @@ struct			SCmd	{
   unsigned		g:	1;
   unsigned		p:	1;
   unsigned		e:	1;
-  unsigned		d:	1; // debug: print before eval
-  FILE			*w; // options i and m affect regex compiling
+  unsigned		d:	1; // if 'p' given before 'e' 
+  FILE			*w;
   int			number;
+ // 'i' and 'm' affect regcomp() 
 };
+
+/*
+**  ----------- Function Prototypes  -----------
+*/
 
 void	*xmalloc(size_t len);
 void	*xrealloc(void *ptr, size_t len);
