@@ -12,7 +12,7 @@ $(NAME): $(OBJ) | $(OBJDIR)
 	$(CC) -o $@ $(CFLAGS) $(WNO) $^
 
 $(OBJ): $(OBJDIR)/%.o : %.c data.h
-	  $(CC) -o $@ $(CFLAGS) $(WNO) -c $<
+	$(CC) -o $@ $(CFLAGS) $(WNO) -c $<
 
 $(OBJDIR):
 	-mkdir $@
