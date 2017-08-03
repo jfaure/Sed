@@ -260,6 +260,11 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
   struct sedCmd		*cmd;
   struct sedCmdAddr	*save_addr; // for cmd groups '{' '}'
 
+  if (!first)
+  {
+    obstack_free(&obstack, NULL);
+    return (NULL);
+  }
   obstack_init(&obstack);
   prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
   save_addr = NULL;

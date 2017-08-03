@@ -52,23 +52,20 @@ bool			match_cmdAddress(prog, addr, pattern, line)
 
 void	append_queue(struct vbuf *text, FILE *out)
 {
-  static struct vbuf buf = {NULL, 0, 0};
+  static struct vbuf *buf;
 
   if (!text)
   {
-    if (buf.len)
-      fwrite(buf.buf, buf.len, 1, out);
+    if (buf)
+    {
+      buf->len && fwrite(buf->buf, buf->len, 1, out);
+      vbuf_free(buf);
+    }
     return ;
   }
-  if (buf.alloc < text->len + buf.len)
-  {
-    buf.alloc || (buf.alloc = 512);
-    while (buf.alloc < text->len + buf.len)
-      buf.alloc <<= 1;
-    buf.buf = xrealloc(buf.buf, buf.alloc);
-  }
-  memcpy(buf.buf + buf.len, text->buf, text->len);
-  buf.len += text->len;
+  if (!buf)
+    buf = vbuf_new();
+  vbuf_addString(buf, text->buf, text->len);
 }
 
 struct lineList		*lineList_new()
