@@ -1,12 +1,5 @@
 #include "data.h"
 
-void	usage(int exit_status)
-{
-  //execl("/usr/bin/sed", "/usr/bin/sed", 0);
-  fputs("Usage\n", stdout);
-  exit(exit_status);
-}
-
 void	panic(const char *why, ...)
 {
   va_list	ap;
@@ -59,20 +52,19 @@ int	main(int ac, char **av)
   memset(&g_sedOptions, 0, sizeof(g_sedOptions));
   memset(&g_lineInfo,   0, sizeof(g_lineInfo));
   while ((opt = getopt_long(ac, av, shortopts, longopts, NULL)) != -1)
-    switch (opt)
-    {
-      case 'i': g_sedOptions.in_place = 1; // -i implies -s
-      case 's': g_sedOptions.separate = 1; break;
-      case 'n': g_sedOptions.silent = 1; break;
-      case 'f': prog_addScript("", optarg); break;
-      case 'e': prog_addScript(optarg, NULL); break;
-      default:  usage(4);
+    switch (opt) {
+    case 'i': g_sedOptions.in_place = 1; // -i implies -s
+    case 's': g_sedOptions.separate = 1; break;
+    case 'n': g_sedOptions.silent = 1; break;
+    case 'f': prog_addScript("", optarg); break;
+    case 'e': prog_addScript(optarg, NULL); break;
+    default:  return (1);
     }
   if (!g_in.info) // no -e or -f scripts
     if (optind < ac)
       prog_addScript(av[optind++], NULL);
     else
-      usage(1);
+      panic("%s requires a script.", *av);
   compile_program(&prog);
   opt = exec_stream(&prog, av + optind);
   compile_program(NULL);

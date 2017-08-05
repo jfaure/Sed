@@ -38,6 +38,7 @@ struct sedRuntime {
 }			g_lineInfo;
 
 struct		zbuf	{
+  int		line;
   char		*cursor;
   char		last;
   struct zbuflist	{
@@ -49,10 +50,14 @@ struct		zbuf	{
   }		*info;
 }		g_in;
 
-#define nextChar() (*g_in.cursor == 0 ? \
+char	nextChar();
+char	prevChar(char c);
+char	nextProgStream();
+
+#define mnextChar() (*g_in.cursor == 0 ? \
       nextProgStream() : *g_in.cursor++)
 
-#define prevChar(c) *--g_in.cursor // not 100% safe
+#define mprevChar(c) *--g_in.cursor // not 100% safe
 
 struct		vbuf	{// vector buffers grow by xrealloc
   char		*buf;

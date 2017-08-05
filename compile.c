@@ -1,13 +1,31 @@
 #include <stdio.h>
 #include "data.h"
 
+char	nextChar()
+{
+  *g_in.cursor == '\n' && ++g_in.line;
+  if (*g_in.cursor)
+    return (*g_in.cursor++);
+  else
+    return (nextProgStream());
+}
+
+int	nextNum(char c)
+{
+  int	r = 0;
+  while (isdigit(c))
+    r = r * 10 + c - '0', c = nextChar();
+  *--g_in.cursor;
+  return (r);
+}
+
 /*
 ** Prepare next file/string for nextChar()
 ** this implementation allows for stuff like sed -e i\ -f <(echo insertthis)
 ** inserts '\n' between input streams
 */
 char	nextProgStream()
-{ DBcompile("nextProgStream\n");
+{
   if (!g_in.info)
     return EOF;
   g_in.cursor && (g_in.last = g_in.cursor[-1]);
@@ -25,16 +43,18 @@ char	nextProgStream()
   struct zbuflist *t = g_in.info; g_in.info = g_in.info->next; free(t);
   if (!g_in.info)
     return (EOF);
-  puts("new script file");
   return ((g_in.cursor = g_in.info->buf) ? '\n' : nextProgStream());
 }
 
 void			prog_addScript(char *str, char *filename)
 {
   static struct zbuflist	*last = 0;
-  DBcompile("adding script");
+
   if (!last)
+  {
     last = g_in.info = xmalloc(sizeof(*last));
+    g_in.line = 1;
+  }
   else
     last = last->next = xmalloc(sizeof(*last));
   last->next = 0;
@@ -45,20 +65,6 @@ void			prog_addScript(char *str, char *filename)
   g_in.cursor = g_in.info->buf;
 }
 
-void	bad_prog(char const *why) { fprintf(stderr, why); exit(1); } 
-void	bad_cmd(char cmd) { fprintf(stderr, "Unknown Command: %c", cmd); exit(1); }
-
-int	nextNum(char *c)
-{
-  int	r;
-
-  r = 0; 
-  while (isdigit(*c))
-    r = r * 10 + *c - '0', *c = nextChar();
-  prevChar(*c);
-  return (r);
-}
-
 char			compile_address_regex(regex_t *regex, char delim, int cflags)
 {
   char			in;
@@ -67,7 +73,7 @@ char			compile_address_regex(regex_t *regex, char delim, int cflags)
   delim == '\\' && (delim = nextChar());
   text = snarf(delim);
   if (!text)
-    bad_cmd('/');
+    panic("Unknown Command: %c", delim);
   regcomp(regex, text->buf, cflags);
   vbuf_free(text);
   return (0);
@@ -75,15 +81,20 @@ char			compile_address_regex(regex_t *regex, char delim, int cflags)
 
 bool			compile_address(struct sedAddr *addr, char in)
 {
-  DBcompile("compile address, in = %c\n", in);
-  if (isdigit(in))
+  if (in == '-' || in == '$' || isdigit(in))
   {
+    if (in == '-')
+      addr->info.line = -nextNum(nextChar());
+    else if (in == '$')
+      addr->info.line = -1;
+    else
+      addr->info.line = nextNum(in);
+    if (addr->info.line < g_lineInfo.lookahead)
+      g_lineInfo.lookahead = addr->info.line;
     addr->type = ADDR_LINE;
-    addr->info.line = nextNum(&in);
   }
   else if (in == '$')
   {
-    addr->type = ADDR_END;
     g_lineInfo.lookahead || (g_lineInfo.lookahead = -1);
   }
   else if (in == '/' || in == '\\')
@@ -125,12 +136,14 @@ char			compile_cmd_address(struct sedCmd *cmd)
   {
     cmd->addr->type = CMD_ADDR_STEP;
     in = nextChar();
-    cmd->addr->step = nextNum(&in);
+    cmd->addr->step = nextNum(in);
     return (in);
   }
   else
     cmd->addr->type = CMD_ADDR_LINE;
-  return (nextChar());
+  if (in = nextChar())
+    return (in);
+  panic("No command for address");
 }
 
 void			compile_y(struct sedCmd *cmd)
@@ -205,7 +218,7 @@ struct SCmd 		*compile_s()
   delim = nextChar();
   delim == '\\' && (delim = nextChar());
   if (!(regex = snarf(delim)) || !(replace = snarf(delim)))
-    bad_cmd('/');
+    panic("unterminated delimiter %c", '/');
   cflags = get_s_options(s);
   s->new.text = replace->buf;
   s->new.n_refs = replace->len;
@@ -256,48 +269,43 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
   }
 }
 
+#define compile_lparen if (l_paren) panic("Too many '{'");\
+                     else l_paren = &prog->cmd.info.jmp; 
+
+#define compile_rparen if (!l_paren) panic("unexpected '}'");\
+  		     else *l_paren = prog; l_paren = NULL;
+
 struct sedProgram	*compile_program(struct sedProgram *const first)
 {
   static struct obstack	obstack;
-  struct sedProgram	*prog;
+  struct sedProgram	*prog, **l_paren = NULL; // '{'
   struct sedCmd		*cmd;
-  struct sedCmdAddr	*save_addr; // for cmd groups '{' '}'
 
-  if (!first)
-  {
+  if (!first) {
     obstack_free(&obstack, NULL);
     return (NULL);
   }
   obstack_init(&obstack);
   prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
-  save_addr = NULL;
-  for (;;)
+  while ((cmd = &prog->cmd)->cmdChar = compile_cmd_address(cmd))
   {
-    cmd = &prog->cmd;
-    cmd->cmdChar = compile_cmd_address(cmd);
-    cmd->cmdChar && DBcompile("compiling %d(%c)\n", cmd->cmdChar, cmd->cmdChar);
-    switch (cmd->cmdChar) // Use switch as dispatch table
-    {
-      case 0:   cmd->cmdChar = '#'; cmd = 0; 		goto finish; // only way out
-      case '#': vbuf_free(vbuf_readName()); 				continue;
-      case EOF: bad_prog("Missing command for address");
-      case '{': save_addr = cmd->addr; 					break;
-      case '}': save_addr = NULL; 					break;
-      case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
-      case 'q': case 'Q': break;
-      case 'r': case 'R':
-      case 'w': case 'W': cmd->info.text = vbuf_readName(); 		break;
-      case 'd': case 'D': case 'h': case 'H': case 'g': case 'G': case 'x':
-      case 'l': case 'n': case 'N': case 'p': case 'P': case '=': 	break;
-      case ':': do_label(prog, NULL); 					break;
-      case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
-      case 's': cmd->info.s = compile_s(); 				break;
-      case 'y': compile_y(cmd); 					break;
-      default: bad_cmd(cmd->cmdChar);
+    switch (cmd->cmdChar) { // Use switch as dispatch table
+    case '#': vbuf_free(vbuf_readName()); 				continue;
+    case '{': compile_lparen; break;
+    case '}': compile_rparen; break;
+    case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
+    case 'q': case 'Q': break; //nm ?
+    case 'r': case 'R': case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
+    case ':': do_label(prog, NULL); 					break;
+    case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
+    case 's': cmd->info.s = compile_s(); 				break;
+    case 'y': compile_y(cmd); 						break;
+    default:  if (!strchr("dDhHgGxlnNpP=", cmd->cmdChar))
+	        panic("Unknown command '%c'", cmd->cmdChar);
     }
     prog = prog->next = obstack_alloc(&obstack, sizeof(*prog)); // 'continue' skips this
   }
-  finish:
+  prog->cmd.cmdChar = '#';
   do_label(NULL, NULL); // connect jmps
   return(prog->next = first);
 }
