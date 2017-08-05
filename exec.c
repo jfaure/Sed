@@ -1,29 +1,27 @@
 #include "data.h"
 
-int			g_lineCount;
-
-bool			match_address(addr, pattern, line)
-  struct sedAddr *addr; struct lineList *pattern; int line;
+bool			match_address(addr, pattern)
+  struct sedAddr *addr; struct sedLine *pattern;
 {
   return ((addr->type == ADDR_NONE 
-    || addr->type == ADDR_LINE  && line == addr->info.line
-    || addr->type == ADDR_END   && !pattern->lookahead
+    || addr->type == ADDR_LINE  && g_lineInfo.current == addr->info.line
+    || addr->type == ADDR_END   && g_lineInfo.lookahead == g_lineInfo.current 
     || addr->type == ADDR_REGEX
     && !regexec(&addr->info.regex, pattern->active, 0, NULL, 0)));
 }
 
-bool			match_addressRange(addr, pattern, line)
-  struct sedCmdAddr *addr; struct lineList *pattern; int line;
+bool			match_addressRange(addr, pattern)
+  struct sedCmdAddr *addr; struct sedLine *pattern;
 {
   bool			r;
 
   if (addr->a1.type != ADDR_NONE) // Range inactive
-    if (r = match_address(addr->a1, pattern, line))
+    if (r = match_address(addr->a1, pattern))
     {
       addr->a1.type = ADDR_NONE; // Range active
       return (true);
     }
-  if (r = match_address(addr->a2, pattern, line))
+  if (r = match_address(addr->a2, pattern))
   {
     addr->type = CMD_ADDR_DONE;  // Address will never be matched again.. (remove cmd ?)
     return (false);
@@ -31,22 +29,22 @@ bool			match_addressRange(addr, pattern, line)
   return (true);
 }
 
-bool			match_addressStep(addr, pattern, line)
-  struct sedCmdAddr *addr; struct lineList *pattern; int line;
+bool			match_addressStep(addr, pattern)
+  struct sedCmdAddr *addr; struct sedLine *pattern;
 {
 }
 
 // Wil incidentally remove dead addresses from the program
-bool			match_cmdAddress(prog, addr, pattern, line)
-    struct sedProgram *prog; struct sedCmdAddr *addr; struct lineList *pattern; int line; 
+bool			match_cmdAddress(prog, addr, pattern)
+    struct sedProgram *prog; struct sedCmdAddr *addr; struct sedLine *pattern;
 {
   bool			match;
 
   return (addr->bang != 
       (addr->type == CMD_ADDR_DONE
-      || addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern, line)
-      || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern, line)
-      || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern, line)));
+      || addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern)
+      || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern)
+      || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern)));
   return (addr->bang += match);
 }
 
@@ -68,18 +66,20 @@ void	append_queue(struct vbuf *text, FILE *out)
   vbuf_addString(buf, text->buf, text->len);
 }
 
-struct lineList		*lineList_new()
+#define AVG_MAX_LINE 100 
+
+struct sedLine		*sedLine_new()
 {
-  struct lineList	*l;
+  struct sedLine	*l;
 
   l = xmalloc(sizeof(*l));
-  l->active = l->buf = xmalloc(l->alloc = 256);
+  l->active = l->buf = xmalloc(l->alloc = AVG_MAX_LINE);
   l->buf[l->len = 0] = 0;
-  l->lookahead = vbuf_new();
+  l->chomped = true;
   return (l);
 }
 
-void			lineList_appendText(struct lineList *l, char *text, int len)
+void			sedLine_appendText(struct sedLine *l, char *text, int len)
 {
   if (l->alloc - l->len < len + 2)
     l->active = l->buf = xrealloc(l->buf, l->alloc + l->len + len);
@@ -90,17 +90,72 @@ void			lineList_appendText(struct lineList *l, char *text, int len)
     l->active[++l->len] = '\n';
     l->active[++l->len] = 0;
   }
+  l->active[l->len] = 0;
 }
 
-bool			lineList_readLine(struct lineList *l, FILE *in)
+ssize_t			sedLine_getline(struct sedLine *line, FILE *in)
 {
-  ++g_lineCount;
-  if (vbuf_getline(l->lookahead, in) == -1)
-    return (false);
-  lineList_appendText(l, l->lookahead->buf, l->lookahead->len + 1);
+  ssize_t		r;
+
+  r = getline(&line->buf, &line->alloc, in);
+  if (r > 0)
+    if (line->buf[(line->len = r) - 1] == '\n')
+      line->buf[--line->len] = 0;
+    else
+      line->chomped = false; // last line
+  return (r);
 }
 
-void			lineList_deleteEmbeddedLine(struct lineList *l, FILE *out)
+/*
+** Read a line of input, maintain lookahead (if script needs it) eg. addresses: '$' and '-5'
+*/
+bool			sedLine_readLine(struct sedLine *l, FILE *in)
+{
+  static struct sedLinelist { // Circular list of lookahead lines (last->next == first)
+    struct sedLine	*line;
+    struct sedLinelist	*next;
+  } 			*last = NULL, *t;
+  int			i = 0;
+
+  if (!last) { // initialize
+    if (feof(in))
+      return (false);
+    last = t = xmalloc(sizeof(*last));
+    for (i = g_lineInfo.lookahead; i < 0; ++i) {
+      last->line = sedLine_new();
+      if (-1 == sedLine_getline(last->line, in)) {
+	g_lineInfo.lookahead = i;
+	break;
+      }
+      last = last->next = xmalloc(sizeof(*last));
+    }
+    last->line = sedLine_new();
+    last->next = t;
+  }
+  if (-1 == sedLine_getline(last->line, in)) { // read line into last
+    if (g_lineInfo.lookahead < 0)
+      g_lineInfo.lookahead = -g_lineInfo.lookahead;
+    if (last->next == last)
+    {
+      free(last);
+      return (false);
+    }
+    --g_lineInfo.lookahead;
+    t = last->next;
+    last->line = t->line;
+    last->next = t->next;
+    free(t);
+    t = last;
+  }
+  else
+    t = last->next;
+  ++g_lineInfo.current;
+  sedLine_appendText(l, t->line->buf, t->line->len);
+  last = t;
+ return (true);
+}
+
+void			sedLine_deleteEmbeddedLine(struct sedLine *l, FILE *out)
 {
   char			*save;
 
@@ -109,16 +164,20 @@ void			lineList_deleteEmbeddedLine(struct lineList *l, FILE *out)
   l->active += *l->active == '\n';
   l->len -= l->active - save;
   out && fwrite(l->active, l->active - save, 1, out);
+  if (l->chomped)
+    fputs("\n", out);
 }
 
-void			lineList_appendLineList(struct lineList *line, struct lineList *ap)
+void			sedLine_appendLineList(struct sedLine *line, struct sedLine *ap)
 {
-  lineList_appendText(line, ap->active, ap->len);
+  sedLine_appendText(line, ap->active, ap->len);
 }
 
-void			lineList_deleteLine(struct lineList *l, FILE *out)
+void			sedLine_deleteLine(struct sedLine *l, FILE *out)
 {
   out && fwrite(l->active, l->len, 1, out);
+  if (l->chomped == true)
+    fputs("\n", out);
   l->active = l->buf;
   l->len = 0;
 }
@@ -141,7 +200,7 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
   return (new);
 }
 
-char			exec_s(struct SCmd *s, struct lineList *pattern)
+char			exec_s(struct SCmd *s, struct sedLine *pattern)
 {
   char			*cursor;
   struct vbuf		*new;
@@ -177,52 +236,52 @@ char			exec_s(struct SCmd *s, struct lineList *pattern)
 char			exec_file(struct sedProgram *prog, FILE *in, FILE *out) 
 { 
   struct sedProgram		*first;
-  static struct lineList 	*pattern, *hold;
+  static struct sedLine 	*pattern, *hold, *x;
   static char			lastsub;
   struct sedCmd			*cmd;
 
   first = prog;
-  lastsub = 0; pattern = lineList_new(); hold = lineList_new();
-  while (lineList_readLine(pattern, in) == true)
+  lastsub = 0; pattern = sedLine_new(); hold = sedLine_new();
+  while (sedLine_readLine(pattern, in) == true)
   {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
-      if (!cmd->addr || match_cmdAddress(prog, cmd->addr, pattern, g_lineCount))
+      if (!cmd->addr || match_cmdAddress(prog, cmd->addr, pattern))
 	switch (cmd->cmdChar) {
 	case '#': case ':': break;
-        case '=': fprintf(out, "%d\n", g_lineCount); fflush(out); break;
+        case '=': fprintf(out, "%d\n", g_lineInfo.current); fflush(out); break;
         case 'a': append_queue(cmd->info.text, out); break;
         case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
-        case 'q': lineList_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
+        case 'q': sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
         case 'Q': return (cmd->info.int_arg);
         case 'r':
         case 'R':
         case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
-        case 'd': lineList_deleteLine(pattern, NULL); break;
-        case 'D': lineList_deleteEmbeddedLine(pattern, NULL); break;
-        case 'h': lineList_deleteLine(hold, 0);
-	          lineList_appendLineList(hold, pattern); break;
-        case 'H': lineList_appendLineList(hold, pattern); break;
-        case 'g': lineList_deleteLine(pattern, 0);
-	          lineList_appendLineList(pattern, hold);break;
-        case 'G': lineList_appendLineList(pattern, hold); break;
+        case 'd': sedLine_deleteLine(pattern, NULL); break;
+        case 'D': sedLine_deleteEmbeddedLine(pattern, NULL); break;
+        case 'h': sedLine_deleteLine(hold, 0);
+	          sedLine_appendLineList(hold, pattern); break;
+        case 'H': sedLine_appendLineList(hold, pattern); break;
+        case 'g': sedLine_deleteLine(pattern, 0);
+	          sedLine_appendLineList(pattern, hold);break;
+        case 'G': sedLine_appendLineList(pattern, hold); break;
         case 'l':
-        case 'n': lineList_deleteLine(pattern, out); lineList_readLine(pattern, in); continue;
-        case 'N': lineList_readLine(pattern, in); break;
-        case 'p': lineList_deleteLine(pattern, out); break;
-        case 'P': lineList_deleteEmbeddedLine(pattern, out); break;
+        case 'n': sedLine_deleteLine(pattern, out); sedLine_readLine(pattern, in); continue;
+        case 'N': sedLine_readLine(pattern, in); break;
+        case 'p': sedLine_deleteLine(pattern, out); break;
+        case 'P': sedLine_deleteEmbeddedLine(pattern, out); break;
         case 's': lastsub = exec_s(cmd->info.s, pattern); break;
  	case 'b': prog = cmd->info.jmp; continue; // if no jmp address ?
         case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;
         case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; continue;
         case 'w':
         case 'W':
-        case 'x':
+        case 'x': x = pattern; pattern = hold; hold = x; break;
         case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
 	            cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
         default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);
 	}
 end:
-    lineList_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
+    sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
     append_queue(0, out); // flush append_queue;
   }
   return (0);
@@ -238,8 +297,7 @@ char			exec_stream(struct sedProgram *prog, char **filelist)
     st = exec_file(prog, stdin, stdout);
   while (*filelist)
   {
-    g_sedOptions.separate && (g_lineCount = 0);
-    printf("executing file '%s'\n", *filelist);
+    g_sedOptions.separate && (g_lineInfo.current = 0);
     file = **filelist == '-'  && !filelist[0][1] ? stdin : fopen(*filelist, "r");
     if (!file)
       printf("Couldn't open file '%s' for reading\n", *filelist);

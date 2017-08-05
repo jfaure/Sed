@@ -1,7 +1,5 @@
 #include "data.h"
 
-struct sedOptions	g_sedOptions = {0, 0, 0, 0, 0, 0};
-
 void	usage(int exit_status)
 {
   //execl("/usr/bin/sed", "/usr/bin/sed", 0);
@@ -13,7 +11,8 @@ void	panic(const char *why, ...)
 {
   va_list	ap;
 
-  va_start(ap, why); vfprintf(stderr, why, ap); va_end(ap); putc(10, stderr);
+  va_start(ap, why); vfprintf(stderr, why, ap); va_end(ap);
+  putc(10, stderr);
   exit(4);
 }
 
@@ -28,7 +27,6 @@ void	*xmalloc(size_t len)
 
 void	*xrealloc(void *this, size_t len)
 {
-  printf("xrealloc(len = %d)\n", len);
   if (this = realloc(this, len))
     return (this);
   panic("realloc returned NULL");
@@ -55,7 +53,11 @@ int	main(int ac, char **av)
   };
   char			opt;
   struct sedProgram	prog;
+  extern struct sedOptions	g_sedOptions;
+  extern struct sedRuntime	g_lineInfo;
 
+  memset(&g_sedOptions, 0, sizeof(g_sedOptions));
+  memset(&g_lineInfo,   0, sizeof(g_lineInfo));
   while ((opt = getopt_long(ac, av, shortopts, longopts, NULL)) != -1)
     switch (opt)
     {

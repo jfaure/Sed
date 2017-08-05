@@ -82,7 +82,10 @@ bool			compile_address(struct sedAddr *addr, char in)
     addr->info.line = nextNum(&in);
   }
   else if (in == '$')
+  {
     addr->type = ADDR_END;
+    g_lineInfo.lookahead || (g_lineInfo.lookahead = -1);
+  }
   else if (in == '/' || in == '\\')
   {
     addr->type = ADDR_REGEX;

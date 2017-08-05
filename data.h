@@ -30,10 +30,12 @@ struct		sedOptions	{
   unsigned	extended_regex_syntax:	1;
 } 		g_sedOptions;
 
-#define nextChar() (*g_in.cursor == 0 ? \
-      nextProgStream() : *g_in.cursor++)
-
-#define prevChar(c) *--g_in.cursor // not 100% safe
+struct sedRuntime {
+  int			current;
+  int			lookahead;
+  // '$' address == -1, 2n'd last == -2 etc..
+  struct vbuf		*str_output;
+}			g_lineInfo;
 
 struct		zbuf	{
   char		*cursor;
@@ -47,6 +49,11 @@ struct		zbuf	{
   }		*info;
 }		g_in;
 
+#define nextChar() (*g_in.cursor == 0 ? \
+      nextProgStream() : *g_in.cursor++)
+
+#define prevChar(c) *--g_in.cursor // not 100% safe
+
 struct		vbuf	{// vector buffers grow by xrealloc
   char		*buf;
   ssize_t	len;
@@ -54,24 +61,26 @@ struct		vbuf	{// vector buffers grow by xrealloc
 };
 
 /*
+** struct sedLine:
 ** Data for pattern and holdspace - contiguous in memory,
 ** since we must sometimes call regexec on the entire region.
+** line sizes are heavily affected by number of N,G,H cmds
 */
-struct			lineList	{
+struct			sedLine	{
   char			*buf;
   size_t		alloc;
   char			*active;
   size_t		len;
-  struct vbuf		*lookahead;
+  bool			chomped; // almost always true
 };
 
 /* 
 ** ----------- Compiled Script datatypes -----------
 */
 
-struct			sedAddr	{ // supports sedCmdAddr
+struct			sedAddr	{ // details for sedCmdAddr
   enum sedAddrType	{
-    ADDR_NONE, // allow cmd adresses like '1,' and ',9'
+    ADDR_NONE, // for cmd adresses like '1,' and ',9'
     ADDR_LINE,
     ADDR_END, // '$'
     ADDR_REGEX,
@@ -120,12 +129,12 @@ struct			sedProgram	{
 /* 
 ** ----------- S command -----------
 ** concatenate recipe to create the replacement:
-** pointer values of 0 to 9 are backreferences,
+** recipe values of 0 to 9 are backreferences,
 ** (char *) -1 ends the recipe,
 ** and other values point somewhere in 'text'.
-** Note: the lowest and highest addresses should never
+** Note: the lowest and highest pointer values should never
 ** overlap malloc()'d memory,
-** they are reserved for the kernel or other purposes
+** they are reserved for the kernel or special meaning
 */
 struct SReplacement		{
   char			*text; //private reference string
@@ -155,20 +164,27 @@ void	*xrealloc(void *ptr, size_t len);
 FILE	*xfopen(const char *f_name, const char *mode);
 
 struct vbuf	*vbuf_new();
-ssize_t	vbuf_getline(struct vbuf *text, FILE *in);
+ssize_t		vbuf_getline(struct vbuf *text, FILE *in);
 struct vbuf	*read_text();
 struct vbuf	*snarf(char delim);
 struct vbuf	*vbuf_readName();
 char		*vbuf_tostring(struct vbuf *);
 
-struct lineList	*lineList_new();
-void		lineList_appendText(struct lineList *l, char *text, int len);
-void		lineList_deleteEmbeddedLine(struct lineList *l, FILE *out);
-void		lineList_appendLineList(struct lineList *line, struct lineList *ap);
-void		lineList_deleteLine(struct lineList *l, FILE *out);
+struct sedLine	*sedLine_new();
+void		sedLine_appendText
+  (struct sedLine *l, char *text, int len);
+void		sedLine_deleteEmbeddedLine
+  (struct sedLine *l, FILE *out);
+void		sedLine_appendLineList
+  (struct sedLine *line, struct sedLine *ap);
+void		sedLine_deleteLine
+  (struct sedLine *l, FILE *out);
 
-struct sedProgram	*compile_file(struct sedProgram *compile, const char *f_name);
-struct sedProgram	*compile_string(struct sedProgram *compile, char *str);
-char	exec_stream(struct sedProgram *prog, char **files);
+struct sedProgram	*compile_file
+  (struct sedProgram *compile, const char *f_name);
+struct sedProgram	*compile_string
+  (struct sedProgram *compile, char *str);
+char	exec_stream
+  (struct sedProgram *prog, char **files);
 
 #endif // ifndef DATA_H_

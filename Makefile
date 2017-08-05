@@ -19,3 +19,5 @@ $(OBJDIR):
 
 clean:
 	rm -rf $(OBJDIR) $(NAME)
+ 
+re: clean all
