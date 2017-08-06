@@ -16,17 +16,17 @@ bool			match_addressRange(addr, pattern)
 {
   bool			r;
 
-  if (addr->a1.type != ADDR_NONE) // Range inactive
-    if (r = match_address(addr->a1, pattern))
+  if (addr->a1.type != ADDR_NONE) // range inactive
+    if (r = match_address(&addr->a1, pattern))
     {
-      addr->a1.type = ADDR_NONE; // Range active
+      addr->a1.type = ADDR_NONE; // activate range 
       return (true);
     }
-  if (r = match_address(addr->a2, pattern))
-  {
+    else
+      return (false);
+  // range active
+  if (r = match_address(&addr->a2, pattern))
     addr->type = CMD_ADDR_DONE;  // Address will never be matched again.. (remove cmd ?)
-    return (false);
-  }
   return (true);
 }
 
@@ -35,15 +35,15 @@ bool			match_addressStep(addr, pattern)
 {
 }
 
-// Wil incidentally remove dead addresses from the program
 bool			match_cmdAddress(prog, addr, pattern)
     struct sedProgram *prog; struct sedCmdAddr *addr; struct sedLine *pattern;
 {
   bool			match;
 
+  if (addr->type == CMD_ADDR_DONE)
+    return (false);
   return (addr->bang != 
-      (addr->type == CMD_ADDR_DONE
-      || addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern)
+      (  addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern)
       || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern)
       || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern)));
   return (addr->bang += match);
@@ -129,6 +129,7 @@ bool			sedLine_readLine(struct sedLine *l, FILE *in)
     if (last->next == last)
     {
       free(last);
+      last = NULL;
       return (false);
     }
     --g_lineInfo.lookahead;
@@ -198,7 +199,7 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
 }
 
 char			exec_s(struct SCmd *s, struct sedLine *pattern)
-{ // '6*6' !
+{
   char			*cursor;
   struct vbuf		*new;
   regmatch_t		pmatch[10];
@@ -265,7 +266,7 @@ new_cycle:
         case 'G': sedLine_appendText(pattern, "\n", 1); sedLine_appendLineList(pattern, hold); break;
         case 'l':
         case 'n': sedLine_deleteLine(pattern, out); sedLine_readLine(pattern, in); continue;
-        case 'N': sedLine_readLine(pattern, in); break;
+        case 'N': sedLine_appendText(pattern, "\n", 1); sedLine_readLine(pattern, in); break;
         case 'p': sedLine_deleteLine(pattern, out); break;
         case 'P': sedLine_deleteEmbeddedLine(pattern, out); break;
         case 's': lastsub = exec_s(cmd->info.s, pattern); break;

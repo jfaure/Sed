@@ -81,6 +81,9 @@ struct vbuf		*snarf(char delim)
       vbuf_free(text);
       return (NULL);
     }
+    else if (in == '\\')
+      if ((in = nextChar()) == 'n') vbuf_addChar(text, '\n');
+      else prevChar(in);
     else
       vbuf_addChar(text, in);
   vbuf_addChar(text, 0);
