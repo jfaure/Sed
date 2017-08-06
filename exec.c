@@ -180,6 +180,22 @@ void			sedLine_deleteLine(struct sedLine *l, FILE *out)
   l->buf[l->len = 0] = 0;
 }
 
+void			exec_l(char *text, FILE *out)
+{
+  panic("fix l");
+  while (1)
+    switch (*text) {
+    case '\a': fputs("\\a", out); break;
+    case '\b': fputs("\\b", out); break;
+    case '\f': fputs("\\f", out); break;
+    case '\n': fputs("\\n", out); break;
+    case '\r': fputs("\\r", out); break;
+    case '\t': fputs("\\t", out); break;
+    case '\v': fputs("\\v", out); break;
+    default: fputc(*text, out);
+    }
+}
+
 struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
     regmatch_t pmatch[], char *cursor)
 {
@@ -188,10 +204,8 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
   new->len = 0;
   for (recipe = s->new.recipe; *recipe != (char *) -1; ++recipe) // \n\n breaks '$'
     if ((long) *recipe < 10)
-    {
       vbuf_addString(new, cursor + pmatch[(long) *recipe].rm_so,
 	  pmatch[(long) *recipe].rm_eo - pmatch[(long) *recipe].rm_so);
-    }
     else
       vbuf_addString(new, *recipe, strlen(*recipe));
   vbuf_addNull(new);
@@ -240,23 +254,23 @@ char			exec_file(struct sedProgram *const first, FILE *in, FILE *out)
 
   prog = first;
   lastsub = 0; pattern = sedLine_new(); hold = sedLine_new();
-new_cycle:
+re_cycle:
   while (sedLine_readLine(pattern, in) == true)
   {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
       if (!cmd->addr || match_cmdAddress(prog, cmd->addr, pattern))
 	switch (cmd->cmdChar) {
-	case '#': case ':': break;
+	case '#': case ':': case '}': break;
+        case '{': prog = cmd->info.jmp; continue;
         case '=': fprintf(out, "%d\n", g_lineInfo.current); fflush(out); break;
         case 'a': append_queue(cmd->info.text, out); break;
-  printf("%d\n", g_lineInfo.lookahead);
         case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
         case 'q': sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
         case 'Q': return (cmd->info.int_arg);
         case 'r':
         case 'R':
         case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
-        case 'd': sedLine_deleteLine(pattern, NULL); prog = first; goto new_cycle;
+	case 'd': sedLine_deleteLine(pattern, NULL); prog = first; goto re_cycle;
         case 'D': sedLine_deleteEmbeddedLine(pattern, NULL); break;
         case 'h': sedLine_deleteLine(hold, 0);
 	          sedLine_appendLineList(hold, pattern); break;
@@ -264,7 +278,7 @@ new_cycle:
         case 'g': sedLine_deleteLine(pattern, 0);
 	          sedLine_appendLineList(pattern, hold);break;
         case 'G': sedLine_appendText(pattern, "\n", 1); sedLine_appendLineList(pattern, hold); break;
-        case 'l':
+	case 'l': exec_l(pattern->buf, out); sedLine_deleteLine(pattern, 0); goto re_cycle;
         case 'n': sedLine_deleteLine(pattern, out); sedLine_readLine(pattern, in); continue;
         case 'N': sedLine_appendText(pattern, "\n", 1); sedLine_readLine(pattern, in); break;
         case 'p': sedLine_deleteLine(pattern, out); break;
@@ -276,6 +290,7 @@ new_cycle:
         case 'w':
         case 'W':
         case 'x': x = pattern; pattern = hold; hold = x; break;
+        case 'z': sedLine_deleteLine(pattern, 0); break;
         case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
 	            cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
         default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);

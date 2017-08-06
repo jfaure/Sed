@@ -1,9 +1,12 @@
 #include "data.h"
 
+char const	*progname;
+
 void	panic(const char *why, ...)
 {
   va_list	ap;
 
+  fprintf(stderr, "%s (line %d): ", progname, g_in.line);
   va_start(ap, why); vfprintf(stderr, why, ap); va_end(ap);
   putc(10, stderr);
   exit(4);
@@ -49,6 +52,7 @@ int	main(int ac, char **av)
   extern struct sedOptions	g_sedOptions;
   extern struct sedRuntime	g_lineInfo;
 
+  progname = *av;
   memset(&g_sedOptions, 0, sizeof(g_sedOptions));
   memset(&g_lineInfo,   0, sizeof(g_lineInfo));
   while ((opt = getopt_long(ac, av, shortopts, longopts, NULL)) != -1)
@@ -64,7 +68,7 @@ int	main(int ac, char **av)
     if (optind < ac)
       prog_addScript(av[optind++], NULL);
     else
-      panic("%s requires a script.", *av);
+      panic("%s requires a script.", progname);
   compile_program(&prog);
   opt = exec_stream(&prog, av + optind);
   compile_program(NULL);

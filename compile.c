@@ -192,11 +192,11 @@ char	get_s_options(struct SCmd *s)
     case 'g': s->g = 1; break;
     case 'p': s->p = 1; !s->d && (s->d = !s->e); break;
     case 'e': s->e = 1; break;
-    case 'm': cflags |= REG_NEWLINE; break;
-    case 'i': cflags |= REG_ICASE; break;
+    case 'm': case 'M': cflags |= REG_NEWLINE; break;
+    case 'i': case 'I': cflags |= REG_ICASE; break;
     case '}': case '#': prevChar(delim);
     case ';': case '\r': case '\n': case EOF: return (cflags);
-    default: panic("sed: s: unknown option '%c'\n", delim);
+    default: panic("s: unknown option '%c'", delim);
     }
   return (cflags);
 }
@@ -286,11 +286,19 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 }
 
 #define compile_lbrace if (l_paren) panic("Too many '{'");\
-                     else l_paren = &prog->cmd.info.jmp; 
+                     else l_paren = &prog->cmd.info.jmp, \
+		       prog->cmd.addr->bang = !prog->cmd.addr->bang;
 
 #define compile_rbrace if (!l_paren) panic("unexpected '}'");\
   		     else *l_paren = prog; l_paren = NULL;
 
+void	check_trailing_chars(char cmd)
+{
+  if (!strchr(";\n}", cmd = nextNonBlank()) && cmd != EOF)
+    panic("extra char after command: '%c'(%d)", cmd, cmd);
+}
+
+// add 'e' and 'F' commands ?
 struct sedProgram	*compile_program(struct sedProgram *const first)
 {
   static struct obstack	obstack;
@@ -310,21 +318,21 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     case '{': compile_lbrace; break;
     case '}': compile_rbrace; break;
     case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
-    case 'q': case 'Q': break; //nm ?
+    case 'q': case 'Q':                                     break; //nm ?
     case 'r': case 'R': case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
     case ':': do_label(prog, NULL); 					break;
     case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
     case 's': cmd->info.s = compile_s(); 				break;
-    case 'y': compile_y(cmd); 						break;
-    default:  if (!strchr("dDhHgGxlnNpP=", cmd->cmdChar))
+    case 'y': compile_y(cmd);                                    	break;
+    default:  if (!strchr("dDhHgGxlnNpPz=", cmd->cmdChar))
 	        panic(cmd->cmdChar == EOF ? "Missing command" : "Unknown command '%c'",
 		    cmd->cmdChar);
+	      check_trailing_chars(cmd->cmdChar);
     }
     prog = prog->next = obstack_alloc(&obstack, sizeof(*prog)); // 'continue' skips this
-    if (!strchr(";\n", prog->cmd.cmdChar = nextNonBlank()) && prog->cmd.cmdChar != EOF)
-      panic("extra char after command: '%c'(%d)", prog->cmd.cmdChar, prog->cmd.cmdChar);
   }
   prog->cmd.cmdChar = '#';
   do_label(NULL, NULL); // connect jmps
   return(prog->next = first);
 }
+
