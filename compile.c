@@ -10,16 +10,14 @@ char	nextChar()
     return (nextProgStream());
 }
 
-char	prevChar(char c)
-{
-  *--g_in.cursor;
-}
+#define prevChar(c) *--g_in.cursor; // This should obviously never be called accross a stream boundary (ie: c == '\n')
 
-int	nextNum(char *c)
+int	nextNum(char c)
 {
   int	r = 0;
-  while (isdigit(*c))
-    r = r * 10 + *c - '0', *c = nextChar();
+  while (isdigit(c))
+    r = r * 10 + c - '0', c = nextChar();
+  prevChar(c);
   return (r);
 }
 
@@ -34,13 +32,13 @@ int	nextNonBlank()
 /*
 ** Prepare next file/string for nextChar()
 ** this implementation allows for stuff like sed -e i\ -f <(echo insertthis)
-** inserts '\n' between input streams
+** Importantly, this function insert a '\n' between streams
 */
 char	nextProgStream()
 {
   if (!g_in.info)
     return EOF;
-  g_in.cursor && (g_in.last = g_in.cursor[-1]);
+  g_in.cursor && (g_in.last = g_in.cursor[-1]); // !! why
   if (g_in.info && g_in.info->filename) // then try to read another line
   {
     g_in.info->file || (g_in.info->file = xfopen(g_in.info->filename, "r"));
@@ -48,7 +46,7 @@ char	nextProgStream()
     if (getline(&g_in.info->buf, &g_in.info->alloc, g_in.info->file) != -1)
     {
       g_in.cursor = g_in.info->buf;
-      return ('\n'); // safe ?
+      return ('\n');
     }
   fclose(g_in.info->file);
   }
@@ -69,29 +67,23 @@ void			prog_addScript(char *str, char *filename)
   }
   else
     last = last->next = xmalloc(sizeof(*last));
-  last->next = 0;
+  last->next = last->file = last->alloc = 0;
   last->buf = str;
   last->filename = filename;
-  last->file = 0;
-  last->alloc = 0;
   g_in.cursor = g_in.info->buf;
 }
 
-char			compile_address_regex(regex_t *regex, char delim, int cflags)
+char			compile_address_regex(regex_t *regex, char delim)
 {
   char			in;
   struct vbuf		*text;
+  int			cflags;
 
-  delim == '\\' && (delim = nextChar());
-  text = snarf(delim);
-  if (!text)
-    panic("unterminated address regex (delimitor: '%c')", delim);
-  while ((in = nextChar()) == 'I' || in == 'X' || in == 'M')
-    switch (in) {
-    case 'I': cflags |= REG_ICASE;    break;
-    case 'X': cflags |= REG_EXTENDED; break;
-    case 'M': cflags |= REG_NEWLINE;  break;
-    }
+  cflags = REG_NOSUB | g_sedOptions.extended_regex_syntax * REG_EXTENDED
+  if ((text = snarf(delim)) == NULL)
+    panic("unterminated address regex (expected '%c')", delim);
+  while ((in = nextChar()) == 'I' || in == 'M')
+    cflags |= in == 'I' ? REG_ICASE : REG_NEWLINE;
   regcomp(regex, text->buf, cflags);
   vbuf_free(text);
   return (in);
@@ -101,24 +93,20 @@ char			compile_address(struct sedAddr *addr, char in)
 {
   if (in == '-' || in == '$' || isdigit(in))
   {
+    addr->type = ADDR_LINE;
     if (in == '-')
-      in = nextChar(), addr->info.line = -nextNum(&in);
+      addr->info.line = -nextNum(nextChar()), in = nextChar();
     else if (in == '$')
       addr->info.line = -1, in = nextChar();
     else
       addr->info.line = nextNum(&in);
     if (addr->info.line < g_lineInfo.lookahead)
       g_lineInfo.lookahead = addr->info.line;
-    addr->type = ADDR_LINE;
-  }
-  else if (in == '$')
-  {
-    g_lineInfo.lookahead || (g_lineInfo.lookahead = -1);
   }
   else if (in == '/' || in == '\\') {
     addr->type = ADDR_REGEX;
-    in = compile_address_regex(&addr->info.regex, in,
-	REG_NOSUB | g_sedOptions.extended_regex_syntax * REG_EXTENDED);
+    in == '\\' && (in = nextChar());
+    in = compile_address_regex(&addr->info.regex, in);
   }
   else
     addr->type = ADDR_NONE;
@@ -151,7 +139,7 @@ char			compile_cmd_address(struct sedCmd *cmd)
   {
     cmd->addr->type = CMD_ADDR_STEP;
     in = nextChar();
-    cmd->addr->step = nextNum(&in);
+    cmd->addr->step = nextNum(in);
     return (in);
   }
   else
@@ -252,7 +240,7 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
     char 			*name;
     struct nameList 		*next;
     struct sedProgram		*pos;
-  } *labels = 0, *jumps = 0, *tmp;
+  } 				*labels = 0, *jumps = 0, *tmp;
 
   if (!labels && !jumps)
     obstack_init(&obstack);
@@ -318,7 +306,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     case '{': compile_lbrace; break;
     case '}': compile_rbrace; break;
     case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
-    case 'q': case 'Q':                                     break; //nm ?
+    case 'q': case 'Q':                                    break; //nm ?
     case 'r': case 'R': case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
     case ':': do_label(prog, NULL); 					break;
     case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
@@ -335,4 +323,3 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
   do_label(NULL, NULL); // connect jmps
   return(prog->next = first);
 }
-
