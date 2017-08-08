@@ -108,6 +108,7 @@ char			compile_address(struct sedAddr *addr, char in)
     addr->type = ADDR_REGEX;
     in == '\\' && (in = nextChar());
     in = compile_address_regex(&addr->info.regex, in);
+    isblank(in) && (in = nextNonBlank());
   }
   else
     addr->type = ADDR_NONE;
@@ -146,7 +147,7 @@ char			compile_cmd_address(struct sedCmd *cmd)
   else
     cmd->addr->type = CMD_ADDR_LINE;
   if (in == '!')
-    cmd->addr->bang = 1, in = nextChar();
+    cmd->addr->bang = 1, in = nextNonBlank();
   return (in);
 }
 
@@ -183,10 +184,11 @@ char	get_s_options(struct SCmd *s)
     case 'e': s->e = 1; break;
     case 'm': case 'M': cflags |= REG_NEWLINE; break;
     case 'i': case 'I': cflags |= REG_ICASE; break;
-    case '}': case '#': prevChar(delim);
-    case ';': case '\r': case '\n': case EOF: prevChar(); return (cflags);
+    case '}': case '#': case ';': case ' ':  prevChar(); case '\n':
+    case EOF: case '\r': return (cflags);
     default: panic("s: unknown option '%c'", delim);
     }
+  assert(delim);
   return (cflags);
 }
 
@@ -199,6 +201,7 @@ char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
   i = 0;
   new->recipe[i++] = replace;
   for (; *replace; ++replace)
+  {
     if (*replace == '&')
       new->recipe[i++] = 0, *replace = 0;
     else if (*replace == '\\')
@@ -208,6 +211,11 @@ char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
 	new->recipe[i++] = (char *)(long) *replace - '0';
       else panic("s backref: expected number, got '%c'", *replace);
     }
+    else
+      continue;
+    if (replace[1] != '\\' && replace[1] != '&')
+      new->recipe[i++] = replace + 1;
+  }
   new->recipe[i] = (char *) -1; // mark end of recipe
   return (new->recipe);
 }
@@ -235,7 +243,21 @@ struct SCmd 		*compile_s()
   return (s);
 }
 
-void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
+char			*read_label()
+{
+  char			in = nextChar();
+  struct vbuf		*nm = vbuf_new();
+
+  while (isblank(in))
+    in = nextChar();
+  while (in != EOF && in != ';' && in != '\n')
+    vbuf_addChar(nm, in), in = nextChar();
+  vbuf_addNull(nm);
+  prevChar();
+  return (vbuf_tostring(nm));
+}
+
+char			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 {
   static struct obstack obstack;
   static struct nameList { // private type
@@ -250,8 +272,8 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
   {
     tmp = labels;
     labels = obstack_alloc(&obstack, sizeof(*labels));
+    labels->name = read_label();
     labels->next = tmp;
-    labels->name = vbuf_tostring(vbuf_readName());
     labels->pos = labelcmd;
   }
   else if (jmpcmd) // add jmp
@@ -259,7 +281,7 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
     tmp = jumps;
     jumps = obstack_alloc(&obstack, sizeof(*labels));
     jumps->next = tmp;
-    jumps->name = vbuf_tostring(vbuf_readName());
+    jumps->name = read_label();
     jumps->pos = jmpcmd;
   }
   else // finished, connect all jumps
@@ -273,6 +295,7 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 	}
     obstack_free(&obstack, NULL);
   }
+  return (0);
 }
 
 #define compile_lbrace if (l_paren) panic("Too many '{'");\
@@ -300,13 +323,14 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
   {
     switch (cmd->cmdChar) { // Switches are dispatch tables 
     case '#': vbuf_free(vbuf_readName()); 				continue;
-    case '{': compile_lbrace; break;
-    case '}': compile_rbrace; break;
+    case '{': compile_lbrace; 						break;
+    case '}': compile_rbrace; 						break;
     case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
     case 'q': case 'Q': cmd->info.int_arg = nextNum(nextChar());        break;
-    case 'r': case 'R': case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
+    case 'r': case 'R': case 'w': case 'W':
+	cmd->info.text = vbuf_readName(); 				break;
     case ':': do_label(prog, NULL); 					break;
-    case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
+    case 'b': case 't': case 'T': do_label(NULL, prog);  	 	break;
     case 's': cmd->info.s = compile_s(); 				break;
     case 'y': compile_y(cmd);                                    	break;
     default:  if (!strchr("dDhHgGxlnNpPz=", cmd->cmdChar))
@@ -317,10 +341,19 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
       if ((chk = nextNonBlank()) == '}')
 	prevChar();
       else if (!strchr(";\n", chk) && chk != EOF)
+      {
+	putchar(chk);
+	char l = chk;
+	while (EOF != (chk = nextChar()))
+	  putchar(chk);
+	chk  = l;
 	panic("%c: unknown argument '%c'", cmd->cmdChar, chk);
+      }
     prog = prog->next = obstack_alloc(&obstack, sizeof(*prog));
   }
   prog->cmd.cmdChar = '#';
+  do_label(prog, NULL); // empty branches
   do_label(NULL, NULL); // connect jmps
   return(prog->next = first);
 }
+// issues with prevChar('\n') ...

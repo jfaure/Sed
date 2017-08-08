@@ -245,7 +245,7 @@ char			exec_s(struct SCmd *s, struct sedLine *pattern)
       pattern->buf = xrealloc(pattern->buf, pattern->alloc <<= 1);
       pattern->active += (long) pattern->buf; cursor += (long) pattern->buf;
     }
-    assert(diff > 0);
+    assert(diff >= 0);
     memmove(cursor + pmatch[0].rm_so + new->len, cursor + pmatch[0].rm_eo, diff);
     memmove(cursor + pmatch[0].rm_so, new->buf, new->len);
     pattern->len += new->len - (pmatch[0].rm_eo - pmatch[0].rm_so);
@@ -292,8 +292,8 @@ re_cycle:
         case 'N': sedLine_readLine(pattern, in); break;
         case 'p': sedLine_printLine(pattern, out); break;
         case 'P': sedLine_printEmbeddedLine(pattern, out);break;
-        case 's': lastsub = exec_s(cmd->info.s, pattern); break;
- 	case 'b': prog = cmd->info.jmp; continue; // if no jmp address ?
+        case 's': lastsub |= exec_s(cmd->info.s, pattern); break;
+ 	case 'b': prog = cmd->info.jmp;	continue;
         case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;
         case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; continue;
         case 'w':

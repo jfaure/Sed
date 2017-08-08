@@ -76,6 +76,7 @@ struct vbuf		*snarf(char delim, char regex)
 
   text = vbuf_new();
   while ((in = nextChar()) != delim || open_paren)
+  {
     if (in == EOF)
     {
       vbuf_free(text);
@@ -85,20 +86,22 @@ struct vbuf		*snarf(char delim, char regex)
     {
       if ((in = nextChar()) == 'n')
 	vbuf_addChar(text, '\n');
-      else if (in != delim)
+      else
+      {
+	vbuf_addChar(text, '\\');
 	vbuf_addChar(text, in);
+      }
       if (regex == -1)
 	if (in == '(')
 	  ++open_paren;
 	else if (in == ')')
 	  --open_paren;
+      continue;
     }
-    else if (in == '(' && regex == 1 || in == '[')
-      ++open_paren;
-    else if (in == ')' && regex == 1 || in == ']')
-      --open_paren;
-    else
-      vbuf_addChar(text, in);
+    (in == '(' && regex == 1 || in == '[') && ++open_paren;
+    (in == ')' && regex == 1 || in == ']') &&  --open_paren;
+    vbuf_addChar(text, in);
+  }
   vbuf_addChar(text, 0);
   return (text);
 }
@@ -109,6 +112,8 @@ struct vbuf		*vbuf_readName()
   struct vbuf		*text;
 
   text = vbuf_new();
+  if ((in = nextChar()) == '\\' && (in = nextChar()) == '\n')
+    in = nextChar();
   while (isblank(in = nextChar()))
     ;
   while (in && in != '\n' && in != EOF)
