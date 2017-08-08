@@ -108,6 +108,7 @@ bool			sedLine_readLine(struct sedLine *l, FILE *in)
   } 			*last = NULL, *t;
   int			i = 0;
 
+  l->chomped = true;
   if (!last) { // initialize
     if (feof(in))
       return (false);
@@ -147,6 +148,18 @@ bool			sedLine_readLine(struct sedLine *l, FILE *in)
  return (true);
 }
 
+void			sedLine_printLine(struct sedLine *l, FILE *out)
+{
+  fwrite(l->active, l->len, 1, out);
+  l->chomped == true && fputc('\n', out);
+}
+
+void			sedLine_printEmbeddedLine(struct sedLine *l, FILE *out)
+{
+  fwrite(l->active, strchrnul(l->active, '\n') - l->active, 1, out);
+  l->chomped == true && fputc('\n', out);
+}
+
 void			sedLine_deleteEmbeddedLine(struct sedLine *l, FILE *out)
 {
   char			*save;
@@ -163,21 +176,17 @@ void			sedLine_deleteEmbeddedLine(struct sedLine *l, FILE *out)
   }
 }
 
-void			sedLine_appendLineList(struct sedLine *line, struct sedLine *ap)
-{
-  sedLine_appendText(line, ap->active, ap->len);
-}
-
 void			sedLine_deleteLine(struct sedLine *l, FILE *out)
 {
   if (out)
-  {
-    fwrite(l->active, l->len, 1, out);
-    if (l->chomped == true)
-      fputc('\n', out);
-  }
+    sedLine_printLine(l, out);
   l->active = l->buf;
   l->buf[l->len = 0] = 0;
+}
+
+void			sedLine_appendLineList(struct sedLine *line, struct sedLine *ap)
+{
+  sedLine_appendText(line, ap->active, ap->len);
 }
 
 void			exec_l(char *text, FILE *out)
@@ -271,7 +280,7 @@ re_cycle:
         case 'R':
         case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
 	case 'd': sedLine_deleteLine(pattern, NULL); prog = first; goto re_cycle;
-        case 'D': sedLine_deleteEmbeddedLine(pattern, NULL); break;
+        case 'D': sedLine_deleteEmbeddedLine(pattern, NULL); pattern->chomped = false; break;
         case 'h': sedLine_deleteLine(hold, 0);
 	          sedLine_appendLineList(hold, pattern); break;
         case 'H': sedLine_appendLineList(hold, pattern); break;
@@ -280,9 +289,9 @@ re_cycle:
         case 'G': sedLine_appendText(pattern, "\n", 1); sedLine_appendLineList(pattern, hold); break;
 	case 'l': exec_l(pattern->buf, out); sedLine_deleteLine(pattern, 0); goto re_cycle;
         case 'n': sedLine_deleteLine(pattern, out); sedLine_readLine(pattern, in); continue;
-        case 'N': sedLine_appendText(pattern, "\n", 1); sedLine_readLine(pattern, in); break;
-        case 'p': sedLine_deleteLine(pattern, out); break;
-        case 'P': sedLine_deleteEmbeddedLine(pattern, out); break;
+        case 'N': sedLine_readLine(pattern, in); break;
+        case 'p': sedLine_printLine(pattern, out); break;
+        case 'P': sedLine_printEmbeddedLine(pattern, out);break;
         case 's': lastsub = exec_s(cmd->info.s, pattern); break;
  	case 'b': prog = cmd->info.jmp; continue; // if no jmp address ?
         case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;

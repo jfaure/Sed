@@ -10,14 +10,12 @@ char	nextChar()
     return (nextProgStream());
 }
 
-#define prevChar(c) *--g_in.cursor; // This should obviously never be called accross a stream boundary (ie: c == '\n')
-
 int	nextNum(char c)
 {
   int	r = 0;
   while (isdigit(c))
     r = r * 10 + c - '0', c = nextChar();
-  prevChar(c);
+  c != EOF && prevChar(c);
   return (r);
 }
 
@@ -67,7 +65,9 @@ void			prog_addScript(char *str, char *filename)
   }
   else
     last = last->next = xmalloc(sizeof(*last));
-  last->next = last->file = last->alloc = 0;
+  last->alloc = 0;
+  last->next = 0;
+  last->file = NULL;
   last->buf = str;
   last->filename = filename;
   g_in.cursor = g_in.info->buf;
@@ -79,12 +79,12 @@ char			compile_address_regex(regex_t *regex, char delim)
   struct vbuf		*text;
   int			cflags;
 
-  cflags = REG_NOSUB | g_sedOptions.extended_regex_syntax * REG_EXTENDED
-  if ((text = snarf(delim)) == NULL)
+  cflags = REG_NOSUB | g_sedOptions.extended_regex_syntax * REG_EXTENDED;
+  if ((text = snarf(delim, g_sedOptions.extended_regex_syntax ? 1 : -1)) == NULL)
     panic("unterminated address regex (expected '%c')", delim);
   while ((in = nextChar()) == 'I' || in == 'M')
     cflags |= in == 'I' ? REG_ICASE : REG_NEWLINE;
-  regcomp(regex, text->buf, cflags);
+  xregcomp(regex, text->buf, cflags);
   vbuf_free(text);
   return (in);
 }
@@ -95,11 +95,12 @@ char			compile_address(struct sedAddr *addr, char in)
   {
     addr->type = ADDR_LINE;
     if (in == '-')
-      addr->info.line = -nextNum(nextChar()), in = nextChar();
+      addr->info.line = -nextNum(nextChar());
     else if (in == '$')
-      addr->info.line = -1, in = nextChar();
+      addr->info.line = -1;
     else
-      addr->info.line = nextNum(&in);
+      addr->info.line = nextNum(in);
+    in = nextChar();
     if (addr->info.line < g_lineInfo.lookahead)
       g_lineInfo.lookahead = addr->info.line;
   }
@@ -121,7 +122,7 @@ char			compile_cmd_address(struct sedCmd *cmd)
   cmd->addr = xmalloc(sizeof(*cmd->addr));
   cmd->addr->bang = 0;
   cmd->addr->type = CMD_ADDR_DONE;
-  while ((in = nextChar()) == ';' || isblank(in) || in == '\n');
+  while ((in = nextNonBlank()) == ';' || in == '\n');
   if (in == EOF) return (0);
   in = compile_address(&cmd->addr->a1, in);
   if (cmd->addr->a1.type == ADDR_NONE && in != ',' && in != '~')
@@ -154,8 +155,8 @@ void			compile_y(struct sedCmd *cmd)
   unsigned char		t;
   struct vbuf	*a, *b;
 
-  a = snarf((t = nextChar()) == '/' ? t : (t = nextChar()));
-  b = snarf(t);
+  a = snarf((t = nextChar()) == '/' ? t : (t = nextChar()), 0);
+  b = snarf(t, 0);
   if (!a || !b)
     panic("unterminated y command");
   if (a->len != b->len)
@@ -176,14 +177,14 @@ char	get_s_options(struct SCmd *s)
   cflags = REG_EXTENDED * g_sedOptions.extended_regex_syntax;
   s->g = s->p = s->e = s->d = s->number = cflags = 0; s->w = NULL;
   while (delim = nextChar())
-    switch (delim) { // missing some extensions
+    switch (delim) {
     case 'g': s->g = 1; break;
     case 'p': s->p = 1; !s->d && (s->d = !s->e); break;
     case 'e': s->e = 1; break;
     case 'm': case 'M': cflags |= REG_NEWLINE; break;
     case 'i': case 'I': cflags |= REG_ICASE; break;
     case '}': case '#': prevChar(delim);
-    case ';': case '\r': case '\n': case EOF: return (cflags);
+    case ';': case '\r': case '\n': case EOF: prevChar(); return (cflags);
     default: panic("s: unknown option '%c'", delim);
     }
   return (cflags);
@@ -221,14 +222,15 @@ struct SCmd 		*compile_s()
   s = xmalloc(sizeof(*s));
   delim = nextChar();
   delim == '\\' && (delim = nextChar());
-  if (!(regex = snarf(delim)) || !(replace = snarf(delim)))
+  if (!(regex = snarf(delim, g_sedOptions.extended_regex_syntax ? 1 : -1))
+      || !(replace = snarf(delim, 0)))
     panic("unterminated delimiter %c", '/');
   cflags = get_s_options(s);
   s->new.text = replace->buf;
   s->new.n_refs = replace->len;
   s->new.recipe = S_backrefs(s, &s->new, s->new.text);
   free(replace);
-  regcomp(&s->pattern, regex->buf, cflags);
+  xregcomp(&s->pattern, regex->buf, cflags);
   vbuf_free(regex);
   return (s);
 }
@@ -280,18 +282,13 @@ void			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 #define compile_rbrace if (!l_paren) panic("unexpected '}'");\
   		     else *l_paren = prog; l_paren = NULL;
 
-void	check_trailing_chars(char cmd)
-{
-  if (!strchr(";\n}", cmd = nextNonBlank()) && cmd != EOF)
-    panic("extra char after command: '%c'(%d)", cmd, cmd);
-}
-
 // add 'e' and 'F' commands ?
 struct sedProgram	*compile_program(struct sedProgram *const first)
 {
   static struct obstack	obstack;
   struct sedProgram	*prog, **l_paren = NULL; // '{'
   struct sedCmd		*cmd;
+  char			chk;
 
   if (!first) {
     obstack_free(&obstack, NULL);
@@ -301,12 +298,12 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
   prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
   while ((cmd = &prog->cmd)->cmdChar = compile_cmd_address(cmd))
   {
-    switch (cmd->cmdChar) { // Use switch as dispatch table
+    switch (cmd->cmdChar) { // Switches are dispatch tables 
     case '#': vbuf_free(vbuf_readName()); 				continue;
     case '{': compile_lbrace; break;
     case '}': compile_rbrace; break;
     case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;
-    case 'q': case 'Q':                                    break; //nm ?
+    case 'q': case 'Q': cmd->info.int_arg = nextNum(nextChar());        break;
     case 'r': case 'R': case 'w': case 'W': cmd->info.text = vbuf_readName(); break;
     case ':': do_label(prog, NULL); 					break;
     case 'b': case 't': case 'T': do_label(NULL, prog); 		break;
@@ -315,9 +312,13 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     default:  if (!strchr("dDhHgGxlnNpPz=", cmd->cmdChar))
 	        panic(cmd->cmdChar == EOF ? "Missing command" : "Unknown command '%c'",
 		    cmd->cmdChar);
-	      check_trailing_chars(cmd->cmdChar);
     }
-    prog = prog->next = obstack_alloc(&obstack, sizeof(*prog)); // 'continue' skips this
+    if ((chk = cmd->cmdChar) != '{')
+      if ((chk = nextNonBlank()) == '}')
+	prevChar();
+      else if (!strchr(";\n", chk) && chk != EOF)
+	panic("%c: unknown argument '%c'", cmd->cmdChar, chk);
+    prog = prog->next = obstack_alloc(&obstack, sizeof(*prog));
   }
   prog->cmd.cmdChar = '#';
   do_label(NULL, NULL); // connect jmps

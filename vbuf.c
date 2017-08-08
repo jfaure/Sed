@@ -68,22 +68,35 @@ ssize_t			vbuf_getline(struct vbuf *text, FILE *in)
   return (text->len);
 }
 
-struct vbuf		*snarf(char delim)
-{
+struct vbuf		*snarf(char delim, char regex)
+{ // regex can be -1 (basic), 1 (extended) or 0 (never ignore delim)
   char			in;
   struct vbuf		*text;
+  int			open_paren = 0;
 
-  DBcompile("snarf delim %c\n", delim);
   text = vbuf_new();
-  while ((in = nextChar()) != delim)
+  while ((in = nextChar()) != delim || open_paren)
     if (in == EOF)
     {
       vbuf_free(text);
       return (NULL);
     }
     else if (in == '\\')
-      if ((in = nextChar()) == 'n') vbuf_addChar(text, '\n');
-      else prevChar(in);
+    {
+      if ((in = nextChar()) == 'n')
+	vbuf_addChar(text, '\n');
+      else if (in != delim)
+	vbuf_addChar(text, in);
+      if (regex == -1)
+	if (in == '(')
+	  ++open_paren;
+	else if (in == ')')
+	  --open_paren;
+    }
+    else if (in == '(' && regex == 1 || in == '[')
+      ++open_paren;
+    else if (in == ')' && regex == 1 || in == ']')
+      --open_paren;
     else
       vbuf_addChar(text, in);
   vbuf_addChar(text, 0);

@@ -19,8 +19,6 @@
 #define obstack_chunk_alloc xmalloc
 #define obstack_chunk_free  free
 
-#define DBcompile //printf
-
 struct		sedOptions	{
   unsigned	silent:			1;
   unsigned	follow_symlinks:	1;
@@ -29,6 +27,8 @@ struct		sedOptions	{
   unsigned	separate:		1;
   unsigned	extended_regex_syntax:	1;
 } 		g_sedOptions;
+
+#define prevChar(c) *--g_in.cursor
 
 struct sedRuntime {
   int			current;
@@ -51,7 +51,6 @@ struct		zbuf	{
 }		g_in;
 
 char	nextChar();
-char	prevChar(char c);
 char	nextProgStream();
 
 #define mnextChar() (*g_in.cursor == 0 ? \
@@ -167,11 +166,12 @@ struct			SCmd	{
 void	*xmalloc(size_t len);
 void	*xrealloc(void *ptr, size_t len);
 FILE	*xfopen(const char *f_name, const char *mode);
+int	xregcomp(regex_t *, const char *, int);
 
 struct vbuf	*vbuf_new();
 ssize_t		vbuf_getline(struct vbuf *text, FILE *in);
 struct vbuf	*read_text();
-struct vbuf	*snarf(char delim);
+struct vbuf	*snarf(char delim, char regex);
 struct vbuf	*vbuf_readName();
 char		*vbuf_tostring(struct vbuf *);
 

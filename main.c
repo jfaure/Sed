@@ -37,6 +37,17 @@ FILE	*xfopen(const char *f_name, const char *mode)
   panic("fopen returned NULL");
 }
 
+int	xregcomp(regex_t *preg, const char *regex, int cflags)
+{
+  int	st;
+  char	buf[256];
+
+  if (0 == (st = regcomp(preg, regex, cflags)))
+    return (0);
+  regerror(st, preg, buf, 256);
+  panic(buf);
+}
+
 int	main(int ac, char **av)
 {
   char const *const	shortopts = "si::nf:e:";
