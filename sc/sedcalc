@@ -1,4 +1,4 @@
-#!./sed -rf
+#!./sed -f
 # sed calculator (test + benchmark for sed)
 # usage: ./sedcalc <<< '3 + (9 - 11) / 2'
 

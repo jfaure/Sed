@@ -50,13 +50,14 @@ int	xregcomp(regex_t *preg, const char *regex, int cflags)
 
 int	main(int ac, char **av)
 {
-  char const *const	shortopts = "si::nf:e:";
+  char const *const	shortopts = "Ersi::nf:e:";
   struct option		longopts[] = {
     {"in-place", 2, 0, 'i'},
     {"separate", 0, 0, 's'},
     {"file", 1, 0, 'f'},
+    {"regexp-extended", 0, 0, 'r'},
     {"silent", 0, 0, 'n'}, {"quiet", 0, 0, 'n'},
-    {NULL, 0, NULL, 0}
+    {0, 0, 0, 0}
   };
   char			opt;
   struct sedProgram	prog;
@@ -73,6 +74,8 @@ int	main(int ac, char **av)
     case 'n': g_sedOptions.silent = 1; break;
     case 'f': prog_addScript("", optarg); break;
     case 'e': prog_addScript(optarg, NULL); break;
+    case 'r':
+    case 'E': g_sedOptions.extended_regex_syntax = 1;
     default:  return (1);
     }
   if (!g_in.info) // no -e or -f scripts
