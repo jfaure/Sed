@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
-#define randnum rand() % 10 + '0'
-#define randop "1-%/*"[rand() % 5]
+#define randnum (rand() % 10 + '0')
+#define randop "+-%/*"[rand() % 5]
 
 std::string	genexpr(int len)
 {
@@ -14,19 +14,16 @@ std::string	genexpr(int len)
 
   while (len--)
   {
-    c = rand() % 2 && r.back() != '-' ? '-' : randnum;
-    r.push_back(c);
-    if (c == '-') r.push_back(randnum);
+    r += c = rand() % 2 && r.back() != '-' ? '-' : randnum;
+    if (c == '-')
+      r += randnum;
     if (rand() % 3 == 0 && parens > 0)
-      r.push_back(')'), --parens;
-    r.push_back(randop);
+      r += ')', --parens;
+    r += randop;
     if (rand() % 3 == 0)
-      r.push_back('('), ++parens;
+      r += '(', ++parens;
   }
-  r.push_back(randnum);
-  while (parens-- > 0)
-    r.push_back(')');
-  return (r);
+  return (r + randnum + std::string(parens, ')'));
 }
 
 int	main(int ac, char **av)
