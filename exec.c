@@ -6,7 +6,6 @@ bool			match_address(addr, pattern)
   return ((addr->type == ADDR_NONE 
     || addr->type == ADDR_LINE &&
       (g_lineInfo.current == addr->info.line || g_lineInfo.current == g_lineInfo.lookahead)
-    || addr->type == ADDR_END   && g_lineInfo.lookahead == g_lineInfo.current 
     || addr->type == ADDR_REGEX
     && !regexec(&addr->info.regex, pattern->active, 0, NULL, 0)));
 }

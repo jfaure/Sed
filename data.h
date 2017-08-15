@@ -86,7 +86,6 @@ struct			sedAddr	{ // details for sedCmdAddr
   enum sedAddrType	{
     ADDR_NONE, // for cmd adresses like '1,' and ',9'
     ADDR_LINE,
-    ADDR_END, // '$'
     ADDR_REGEX,
   }			type;
   union	{
