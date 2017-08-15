@@ -4,10 +4,7 @@
 char	nextChar()
 {
   *g_in.cursor == '\n' && ++g_in.line;
-  if (*g_in.cursor)
-    return (*g_in.cursor++);
-  else
-    return (nextProgStream());
+  return (*g_in.cursor ? *g_in.cursor++ : nextProgStream())
 }
 
 int	nextNum(char c)
@@ -21,9 +18,9 @@ int	nextNum(char c)
 
 int	nextNonBlank()
 {
-  char	c;
-  while (isblank(c = nextChar()))
-    ;
+  char	c = nextChar();
+  while (isblank(c))
+    c = nextChar();
   return (c);
 }
 
@@ -37,12 +34,10 @@ char	nextProgStream()
   if (!g_in.info)
     return EOF;
   g_in.cursor && (g_in.last = g_in.cursor[-1]); // !! why
-  if (g_in.info && g_in.info->filename) // then try to read another line
-  {
+  if (g_in.info && g_in.info->filename) { // then try to read another line
     g_in.info->file || (g_in.info->file = xfopen(g_in.info->filename, "r"));
     g_in.info->alloc = 0;
-    if (getline(&g_in.info->buf, &g_in.info->alloc, g_in.info->file) != -1)
-    {
+    if (getline(&g_in.info->buf, &g_in.info->alloc, g_in.info->file) != -1) {
       g_in.cursor = g_in.info->buf;
       return ('\n');
     }
@@ -58,8 +53,7 @@ void			prog_addScript(char *str, char *filename)
 {
   static struct zbuflist	*last = 0;
 
-  if (!last)
-  {
+  if (!last) {
     last = g_in.info = xmalloc(sizeof(*last));
     g_in.line = 1;
   }
@@ -80,7 +74,7 @@ char			compile_address_regex(regex_t *regex, char delim)
   int			cflags;
 
   cflags = REG_NOSUB | g_sedOptions.extended_regex_syntax * REG_EXTENDED;
-  if ((text = snarf(delim, g_sedOptions.extended_regex_syntax ? 1 : -1)) == NULL)
+  if (NULL == (text = snarf(delim, g_sedOptions.extended_regex_syntax ? 1 : -1)))
     panic("unterminated address regex (expected '%c')", delim);
   while ((in = nextChar()) == 'I' || in == 'M')
     cflags |= in == 'I' ? REG_ICASE : REG_NEWLINE;
@@ -91,8 +85,7 @@ char			compile_address_regex(regex_t *regex, char delim)
 
 char			compile_address(struct sedAddr *addr, char in)
 {
-  if (in == '-' || in == '$' || isdigit(in))
-  {
+  if (in == '-' || in == '$' || isdigit(in)) {
     addr->type = ADDR_LINE;
     if (in == '-')
       addr->info.line = -nextNum(nextChar());
@@ -126,22 +119,19 @@ char			compile_cmd_address(struct sedCmd *cmd)
   while ((in = nextNonBlank()) == ';' || in == '\n');
   if (in == EOF) return (0);
   in = compile_address(&cmd->addr->a1, in);
-  if (cmd->addr->a1.type == ADDR_NONE && in != ',' && in != '~')
-  {
+  if (cmd->addr->a1.type == ADDR_NONE && in != ',' && in != '~') {
     free(cmd->addr);
     cmd->addr = NULL;
     return (in);
   }
-  if (in == ',')
-  {
+  if (in == ',') {
     cmd->addr->type = CMD_ADDR_RANGE;
     in = compile_address(&cmd->addr->a2, nextChar());
   }
-  else if (in == '~')
-  {
+  else if (in == '~') {
     cmd->addr->type = CMD_ADDR_STEP;
     in = nextChar();
-    cmd->addr->step = nextNum(in);
+    cmd->addr->step = cmd->addr->a2.line = nextNum(in);
     return (in);
   }
   else
@@ -204,8 +194,7 @@ char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
   {
     if (*replace == '&')
       new->recipe[i++] = 0, *replace = 0;
-    else if (*replace == '\\')
-    {
+    else if (*replace == '\\') {
       *replace = 0;
       if (*++replace >= '0' && *replace <= '9')
 	new->recipe[i++] = (char *)(long) *replace - '0';
@@ -268,28 +257,24 @@ char			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 
   if (!labels && !jumps)
     obstack_init(&obstack);
-  if (labelcmd) // add label
-  {
+  if (labelcmd) { // add label
     tmp = labels;
     labels = obstack_alloc(&obstack, sizeof(*labels));
     labels->name = read_label();
     labels->next = tmp;
     labels->pos = labelcmd;
   }
-  else if (jmpcmd) // add jmp
-  {
+  else if (jmpcmd) {// add jmp
     tmp = jumps;
     jumps = obstack_alloc(&obstack, sizeof(*labels));
     jumps->next = tmp;
     jumps->name = read_label();
     jumps->pos = jmpcmd;
   }
-  else // finished, connect all jumps
-  {
+  else { // finished, connect all jumps
     for ( ; jumps; jumps = jumps->next)
       for (tmp = labels; tmp; tmp = tmp->next)
-	if (!strcmp(tmp->name, jumps->name))
-	{
+	if (!strcmp(tmp->name, jumps->name)) {
 	  jumps->pos->cmd.info.jmp = tmp->pos; 
 	  break;
 	}
@@ -309,19 +294,16 @@ char			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 struct sedProgram	*compile_program(struct sedProgram *const first)
 {
   static struct obstack	obstack;
-  struct sedProgram	*prog, **l_paren = NULL; // '{'
+  struct sedProgram	*prog = first, **l_paren = NULL; // '{'
   struct sedCmd		*cmd;
   char			chk;
 
-  if (!first) {
-    obstack_free(&obstack, NULL);
-    return (NULL);
-  }
+  if (!first)
+    return (NULL, obstack_free(&obstack, NULL));
   obstack_init(&obstack);
   prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
-  while ((cmd = &prog->cmd)->cmdChar = compile_cmd_address(cmd))
-  {
-    switch (cmd->cmdChar) { // Switches are dispatch tables 
+  while ((cmd = &prog->cmd)->cmdChar = compile_cmd_address(cmd)) {
+    switch (cmd->cmdChar) {
     case '#': vbuf_free(vbuf_readName()); 				continue;
     case '{': compile_lbrace; 						break;
     case '}': compile_rbrace; 						break;
@@ -333,7 +315,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     case 'b': case 't': case 'T': do_label(NULL, prog);  	 	break;
     case 's': cmd->info.s = compile_s(); 				break;
     case 'y': compile_y(cmd);                                    	break;
-    default:  if (!strchr("dDhHgGxlnNpPz=", cmd->cmdChar))
+    default:  if (!strchr("dDhHgGxlnNpPz=eF", cmd->cmdChar))
 	        panic(cmd->cmdChar == EOF ? "Missing command" : "Unknown command '%c'",
 		    cmd->cmdChar);
     }
@@ -341,19 +323,11 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
       if ((chk = nextNonBlank()) == '}')
 	prevChar();
       else if (!strchr(";\n", chk) && chk != EOF)
-      {
-	putchar(chk);
-	char l = chk;
-	while (EOF != (chk = nextChar()))
-	  putchar(chk);
-	chk  = l;
 	panic("%c: unknown argument '%c'", cmd->cmdChar, chk);
-      }
     prog = prog->next = obstack_alloc(&obstack, sizeof(*prog));
   }
   prog->cmd.cmdChar = '#';
-  do_label(prog, NULL); // empty branches
+  do_label(prog, NULL); // add label for empty branches
   do_label(NULL, NULL); // connect jmps
   return(prog->next = first);
 }
-// issues with prevChar('\n') ...
