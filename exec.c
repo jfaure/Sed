@@ -1,6 +1,9 @@
 #include "data.h"
 
-bool			match_address(addr, pattern)
+/*
+** 'inline' compiler suggestion means I expect the function to be called only from one place
+*/
+inline bool		match_address(addr, pattern)
   struct sedAddr *addr; struct sedLine *pattern;
 {  
   return ((addr->type == ADDR_NONE 
@@ -11,58 +14,60 @@ bool			match_address(addr, pattern)
     && !regexec(&addr->info.regex, pattern->active, 0, NULL, 0)));
 }
 
-bool			match_addressRange(addr, pattern)
+inline bool		match_addressRange(addr, pattern)
   struct sedCmdAddr *addr; struct sedLine *pattern;
 {
-  bool			r;
-
   if (addr->a1.type != ADDR_NONE) // range inactive
-    if (r = match_address(&addr->a1, pattern))
-    {
+    if (match_address(&addr->a1, pattern)) {
       addr->a1.type = ADDR_NONE; // activate range 
       return (true);
     }
     else
       return (false);
   // range active
-  if (r = match_address(&addr->a2, pattern))
+  if (match_address(&addr->a2, pattern))
     addr->type = CMD_ADDR_DONE;  // Address will never be matched again.. (remove cmd ?)
   return (true);
 }
 
-bool			match_addressStep(addr, pattern)
+inline bool		match_addressStep(addr, pattern)
   struct sedCmdAddr *addr; struct sedLine *pattern;
-{
+{ 
+  if (addr->a1.type != ADDR_NONE) // step inactive
+    if (match_address(&addr->a1, pattern)) {
+      addr->a1.type = ADDR_NONE; // activate range 
+      return (true);
+    }
+    else
+      return (false);
+  // step active
+  if (--addr->step == 0)
+    addr->step = addr->a2.line;
+  return (addr->step == addr->a2.line);
 }
 
-bool			match_cmdAddress(prog, addr, pattern)
+inline bool		match_cmdAddress(prog, addr, pattern)
     struct sedProgram *prog; struct sedCmdAddr *addr; struct sedLine *pattern;
 {
-  bool			match;
-
-  if (addr->type == CMD_ADDR_DONE)
-    return (false);
-  return (addr->bang != 
+  return (addr->type != CMD_ADDR_DONE && addr->bang != 
       (  addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern)
       || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern)
       || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern)));
-  return (addr->bang += match);
 }
 
-void	append_queue(struct vbuf *text, FILE *out)
+inline void	append_queue(struct vbuf *text, FILE *out)
 {
   static struct vbuf *buf;
 
   if (text)
     vbuf_addString(buf ? buf : (buf = vbuf_new()), text->buf, text->len);
-  else if (buf)
-    {
+  else if (buf) {
       buf->len && fwrite(buf->buf, buf->len, 1, out);
       vbuf_free(buf);
     }
 }
 
-#define AVG_MAX_LINE 100 
+#define AVG_MAX_LINE 100
 
 struct sedLine		*sedLine_new()
 {
@@ -264,20 +269,17 @@ char			exec_file(struct sedProgram *const first, FILE *in, FILE *out)
   prog = first;
   lastsub = 0; pattern = sedLine_new(); hold = sedLine_new();
 re_cycle:
-  while (sedLine_readLine(pattern, in) == true)
-  {
+  while (sedLine_readLine(pattern, in) == true) {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
       if (!cmd->addr || match_cmdAddress(prog, cmd->addr, pattern))
 	switch (cmd->cmdChar) {
 	case '#': case ':': case '}': break;
         case '{': prog = cmd->info.jmp; continue;
-        case '=': fprintf(out, "%d\n", g_lineInfo.current); fflush(out); break;
-        case 'a': append_queue(cmd->info.text, out); break;
+        case '=': fprintf(out, "%d\n", g_lineInfo.current); fflush(out);break;
+        case 'a': append_queue(cmd->info.text, out); 			break;
         case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
         case 'q': sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
         case 'Q': return (cmd->info.int_arg);
-        case 'r':
-        case 'R':
         case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
 	case 'd': sedLine_deleteLine(pattern, NULL); prog = first; goto re_cycle;
         case 'D': sedLine_deleteEmbeddedLine(pattern, NULL); pattern->chomped = false; break;
@@ -296,8 +298,12 @@ re_cycle:
  	case 'b': prog = cmd->info.jmp;	continue;
         case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;
         case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; continue;
+	case 'e':
+	case 'F':
+        case 'r':
+        case 'R':
         case 'w':
-        case 'W':
+        case 'W': panic("'%c' is not implemented", cmd->cmdChar);
         case 'x': x = pattern; pattern = hold; hold = x; break;
         case 'z': sedLine_deleteLine(pattern, 0); break;
         case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
@@ -310,22 +316,19 @@ re_cycle:
   return (0);
 }
 
-char			exec_stream(struct sedProgram *prog, char **filelist)
+char		exec_stream(struct sedProgram *prog, char **filelist)
 {
-  int			st;
-  FILE			*file;
+  int		st;
+  FILE		*file;
 
-  st = 0;
   if (!*filelist)
     st = exec_file(prog, stdin, stdout);
-  while (*filelist)
-  {
+  while (*filelist) {
     g_sedOptions.separate && (g_lineInfo.current = 0);
     file = **filelist == '-'  && !filelist[0][1] ? stdin : fopen(*filelist, "r");
     if (!file)
       printf("Couldn't open file '%s' for reading\n", *filelist);
-    else
-    {
+    else {
       st |= exec_file(prog, file, stdout);
       file != stdin && fclose(file);
     }
