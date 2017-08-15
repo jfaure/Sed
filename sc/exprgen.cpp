@@ -14,7 +14,7 @@ std::string	genexpr(int len)
 
   while (len--)
   {
-    r += c = rand() % 2 && r.back() != '-' ? '-' : randnum;
+    r += c = rand() % 2 && c != '-' ? '-' : randnum;
     if (c == '-')
       r += randnum;
     if (rand() % 3 == 0 && parens > 0)
@@ -23,7 +23,7 @@ std::string	genexpr(int len)
     if (rand() % 3 == 0)
       r += '(', ++parens;
   }
-  return (r + randnum + std::string(parens, ')'));
+  return (r + (char) randnum + std::string(parens, ')'));
 }
 
 int	main(int ac, char **av)

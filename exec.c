@@ -1,9 +1,6 @@
 #include "data.h"
 
-/*
-** 'inline' compiler suggestion means I expect the function to be called only from one place
-*/
-inline bool		match_address(addr, pattern)
+bool		match_address(addr, pattern)
   struct sedAddr *addr; struct sedLine *pattern;
 {  
   return ((addr->type == ADDR_NONE 
@@ -13,7 +10,7 @@ inline bool		match_address(addr, pattern)
     && !regexec(&addr->info.regex, pattern->active, 0, NULL, 0)));
 }
 
-inline bool		match_addressRange(addr, pattern)
+bool		match_addressRange(addr, pattern)
   struct sedCmdAddr *addr; struct sedLine *pattern;
 {
   if (addr->a1.type != ADDR_NONE) // range inactive
@@ -29,7 +26,7 @@ inline bool		match_addressRange(addr, pattern)
   return (true);
 }
 
-inline bool		match_addressStep(addr, pattern)
+bool		match_addressStep(addr, pattern)
   struct sedCmdAddr *addr; struct sedLine *pattern;
 { 
   if (addr->a1.type != ADDR_NONE) // step inactive
@@ -41,11 +38,11 @@ inline bool		match_addressStep(addr, pattern)
       return (false);
   // step active
   if (--addr->step == 0)
-    addr->step = addr->a2.line;
-  return (addr->step == addr->a2.line);
+    addr->step = addr->a2.info.line;
+  return (addr->step == addr->a2.info.line);
 }
 
-inline bool		match_cmdAddress(prog, addr, pattern)
+bool		match_cmdAddress(prog, addr, pattern)
     struct sedProgram *prog; struct sedCmdAddr *addr; struct sedLine *pattern;
 {
   return (addr->type != CMD_ADDR_DONE && addr->bang != 
@@ -54,7 +51,7 @@ inline bool		match_cmdAddress(prog, addr, pattern)
       || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern)));
 }
 
-inline void	append_queue(struct vbuf *text, FILE *out)
+void	append_queue(struct vbuf *text, FILE *out)
 {
   static struct vbuf *buf;
 

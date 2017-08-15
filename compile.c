@@ -4,7 +4,7 @@
 char	nextChar()
 {
   *g_in.cursor == '\n' && ++g_in.line;
-  return (*g_in.cursor ? *g_in.cursor++ : nextProgStream())
+  return (*g_in.cursor ? *g_in.cursor++ : nextProgStream());
 }
 
 int	nextNum(char c)
@@ -131,7 +131,7 @@ char			compile_cmd_address(struct sedCmd *cmd)
   else if (in == '~') {
     cmd->addr->type = CMD_ADDR_STEP;
     in = nextChar();
-    cmd->addr->step = cmd->addr->a2.line = nextNum(in);
+    cmd->addr->step = cmd->addr->a2.info.line = nextNum(in);
     return (in);
   }
   else
@@ -298,8 +298,10 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
   struct sedCmd		*cmd;
   char			chk;
 
-  if (!first)
-    return (NULL, obstack_free(&obstack, NULL));
+  if (!first) {
+    obstack_free(&obstack, NULL);
+    return (NULL);
+  }
   obstack_init(&obstack);
   prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
   while ((cmd = &prog->cmd)->cmdChar = compile_cmd_address(cmd)) {

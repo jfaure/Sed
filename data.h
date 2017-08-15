@@ -19,17 +19,6 @@
 #define obstack_chunk_alloc xmalloc
 #define obstack_chunk_free  free
 
-/*
-** Group all globals
-** note: currently unused
-*/
-struct              sedState {
-  char const        *progname;
-  struct sedOptions opts;
-  struct sedRuntime run;
-  struct zbuf       script_in;
-}                   state;
-
 struct		sedOptions	{
   unsigned	silent:			1;
   unsigned	follow_symlinks:	1;
@@ -60,6 +49,17 @@ struct		zbuf	{
     struct zbuflist	*next; // when multiple -f, -e scripts
   }		*info;
 }		g_in;
+
+/*
+** Group all globals
+** note: currently unused
+*/
+struct              sedState {
+  char const        *progname;
+  struct sedOptions opts;
+  struct sedRuntime run;
+  struct zbuf       script_in;
+}                   state;
 
 char	nextChar();
 #define prevChar(c) *--g_in.cursor
