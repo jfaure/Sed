@@ -315,7 +315,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
     case 'b': case 't': case 'T': do_label(NULL, prog);  	 	break;
     case 's': cmd->info.s = compile_s(); 				break;
     case 'y': compile_y(cmd);                                    	break;
-    default:  if (!strchr("dDhHgGxlnNpPz=", cmd->cmdChar))
+    default:  if (!strchr("dDhHgGxlnNpPz=eF", cmd->cmdChar))
 	        panic(cmd->cmdChar == EOF ? "Missing command" : "Unknown command '%c'",
 		    cmd->cmdChar);
     }
