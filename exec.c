@@ -37,42 +37,33 @@ bool		match_addressStep(addr, pattern)
     else
       return (false);
   // step active
-  if (--addr->step == 0)
-    addr->step = addr->a2.info.line;
+  --addr->step || (addr->step = addr->a2.info.line);
   return (addr->step == addr->a2.info.line);
 }
 
 bool		match_cmdAddress(prog, addr, pattern)
     struct sedProgram *prog; struct sedCmdAddr *addr; struct sedLine *pattern;
 {
-  return (addr->type != CMD_ADDR_DONE && addr->bang != 
+  return (addr->type != CMD_ADDR_DONE && addr->bang !=
       (  addr->type == CMD_ADDR_LINE  && match_address(&addr->a1,  pattern)
       || addr->type == CMD_ADDR_RANGE && match_addressRange(addr, pattern)
       || addr->type == CMD_ADDR_STEP  && match_addressStep(addr, pattern)));
 }
 
-void	append_queue(struct vbuf *text, FILE *out)
-{
-  static struct vbuf *buf;
-
-  if (text)
-    vbuf_addString(buf ? buf : (buf = vbuf_new()), text->buf, text->len);
-  else if (buf) {
-      buf->len && fwrite(buf->buf, buf->len, 1, out);
-      vbuf_free(buf);
-    }
-}
-
 #define AVG_MAX_LINE 100
 
-struct sedLine		*sedLine_new()
+void		sedLine_init(struct sedLine *l)
 {
-  struct sedLine	*l;
-
-  l = xmalloc(sizeof(*l));
   l->active = l->buf = xmalloc(l->alloc = AVG_MAX_LINE);
   l->buf[l->len = 0] = 0;
   l->chomped = true;
+}
+
+struct sedLine		*sedLine_new()
+{
+  struct sedLine	*l = xmalloc(sizeof(*l));
+ 
+  sedLine_init(l);
   return (l);
 }
 
@@ -81,15 +72,13 @@ void			sedLine_appendText(struct sedLine *l, char *text, int len)
   if (l->alloc - l->len < len + 2)
     l->active = l->buf = xrealloc(l->buf, l->alloc + l->len + len);
   memcpy(l->active + l->len, text, len);
-  l->len += len;
-  l->active[l->len] = 0;
+  l->active[l->len += len] = 0;
 }
 
 ssize_t			sedLine_getline(struct sedLine *line, FILE *in)
 {
-  ssize_t		r;
+  ssize_t		r = getline(&line->buf, &line->alloc, in);
 
-  r = getline(&line->buf, &line->alloc, in);
   if (r >= 0)
     if (line->buf[(line->len = r) - (r != 0)] == '\n')
       line->buf[--line->len] = 0;
@@ -110,7 +99,7 @@ bool			sedLine_readLine(struct sedLine *l, FILE *in)
   int			i = 0;
 
   l->chomped = true;
-  if (!last) { // initialize
+  if (!last) { // initialize and read -g_lineInfo.lookahead lines into list
     if (feof(in))
       return (false);
     last = t = xmalloc(sizeof(*last));
@@ -128,8 +117,7 @@ bool			sedLine_readLine(struct sedLine *l, FILE *in)
   if (feof(in) || -1 == sedLine_getline(last->line, in)) { // read line into last
     if (g_lineInfo.lookahead < 0)
       g_lineInfo.lookahead = -g_lineInfo.lookahead + 1;
-    if (last->next == last)
-    {
+    if (last->next == last) {
       free(last);
       last = NULL;
       return (false);
@@ -151,7 +139,7 @@ bool			sedLine_readLine(struct sedLine *l, FILE *in)
 
 void			sedLine_printLine(struct sedLine *l, FILE *out)
 {
-  fwrite(l->active, l->len, 1, out);
+  fputs(l->active, out);
   l->chomped == true && fputc('\n', out);
 }
 
@@ -163,14 +151,12 @@ void			sedLine_printEmbeddedLine(struct sedLine *l, FILE *out)
 
 void			sedLine_deleteEmbeddedLine(struct sedLine *l, FILE *out)
 {
-  char			*save;
+  char			*save = l->active;
 
-  save = l->active;
   l->active = strchrnul(l->active, '\n');
   l->active += *l->active == '\n';
   l->len -= l->active - save;
-  if (out && l->len)
-  {
+  if (out && l->len) {
     fwrite(l->active, l->active - save, 1, out);
     if (l->chomped)
       fputs("\n", out);
@@ -181,8 +167,7 @@ void			sedLine_deleteLine(struct sedLine *l, FILE *out)
 {
   if (out)
     sedLine_printLine(l, out);
-  l->active = l->buf;
-  l->buf[l->len = 0] = 0;
+  (l->active = l->buf)[l->len = 0] = 0;
 }
 
 void			sedLine_appendLineList(struct sedLine *line, struct sedLine *ap)
@@ -192,8 +177,7 @@ void			sedLine_appendLineList(struct sedLine *line, struct sedLine *ap)
 
 void			exec_l(char *text, FILE *out)
 {
-  panic("fix l");
-  while (1)
+  for (;*text; ++text)
     switch (*text) {
     case '\a': fputs("\\a", out); break;
     case '\b': fputs("\\b", out); break;
@@ -209,10 +193,10 @@ void			exec_l(char *text, FILE *out)
 struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
     regmatch_t pmatch[], char *cursor)
 {
-  char		**recipe;
+  char		**recipe = s->new.recipe;
 
   new->len = 0;
-  for (recipe = s->new.recipe; *recipe != (char *) -1; ++recipe) // \n\n breaks '$'
+  for (; *recipe != (char *) -1; ++recipe) // \n\n breaks '$'
     if ((long) *recipe < 10)
       vbuf_addString(new, cursor + pmatch[(long) *recipe].rm_so,
 	  pmatch[(long) *recipe].rm_eo - pmatch[(long) *recipe].rm_so);
@@ -224,46 +208,41 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
 
 char			exec_s(struct SCmd *s, struct sedLine *pattern)
 {
-  char			*cursor;
-  struct vbuf		*new;
+  char			*cursor = pattern->active;
+  struct vbuf		*new = vbuf_new();
   regmatch_t		pmatch[10];
-  int			diff, subs;
+  int			diff, subs = 0;
 
-  new = vbuf_new();
-  cursor = pattern->active;
-  subs = 0;
   do {
-    if (regexec(&s->pattern, cursor, 10, pmatch, 0)) {
-      vbuf_free(new);
+    if (regexec(&s->pattern, cursor, 10, pmatch, 0))
       break;
-    }
     ++subs;
     new = resolve_backrefs(new, s, pmatch, cursor);
     diff = pattern->len - (cursor - pattern->buf + pmatch[0].rm_so);
-    while (2 + diff > pattern->alloc - pattern->len)
-    {
+    assert(diff >= 0);
+    while (2 + diff > pattern->alloc - pattern->len) {
       pattern->active -= (long) pattern->buf; cursor -= (long) pattern->buf;
       pattern->buf = xrealloc(pattern->buf, pattern->alloc <<= 1);
       pattern->active += (long) pattern->buf; cursor += (long) pattern->buf;
     }
-    assert(diff >= 0);
     memmove(cursor + pmatch[0].rm_so + new->len, cursor + pmatch[0].rm_eo, diff);
     memmove(cursor + pmatch[0].rm_so, new->buf, new->len);
     pattern->len += new->len - (pmatch[0].rm_eo - pmatch[0].rm_so);
     cursor += pmatch[0].rm_so + new->len;
   } while ((const char) s->g && *cursor);
+  vbuf_free(new);
   return (subs); // has a substitution been made
 }
 
-char			exec_file(struct sedProgram *const first, FILE *in, FILE *out) 
-{ 
-  struct sedProgram		*prog;
-  static struct sedLine 	*pattern, *hold, *x;
-  static char			lastsub;
+char			exec_file(struct sedProgram *const first, FILE *in, FILE *out,
+				  char const *const filename)
+{
+  char				lastsub = 0;
+  struct sedProgram		*prog = first;
+  struct sedLine 		*pattern = sedLine_new(), *hold = sedLine_new(), *x;
   struct sedCmd			*cmd;
+  struct vbuf			*a_cmd = vbuf_new();
 
-  prog = first;
-  lastsub = 0; pattern = sedLine_new(); hold = sedLine_new();
 re_cycle:
   while (sedLine_readLine(pattern, in) == true) {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
@@ -271,8 +250,8 @@ re_cycle:
 	switch (cmd->cmdChar) {
 	case '#': case ':': case '}': break;
         case '{': prog = cmd->info.jmp; continue;
-        case '=': fprintf(out, "%d\n", g_lineInfo.current); fflush(out);break;
-        case 'a': append_queue(cmd->info.text, out); 			break;
+        case '=': fprintf(out, "%d\n", g_lineInfo.current); break;
+        case 'a': vbuf_addString(a_cmd, cmd->info.text->buf, cmd->info.text->len);		break;
         case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
         case 'q': sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
         case 'Q': return (cmd->info.int_arg);
@@ -294,8 +273,8 @@ re_cycle:
  	case 'b': prog = cmd->info.jmp;	continue;
         case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;
         case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; continue;
-	case 'e':
-	case 'F':
+	case 'e': FILE *t = popen(pattern->active, "w"); pclose(t); break;
+	case 'F': fputs(filename, out);
         case 'r':
         case 'R':
         case 'w':
@@ -307,8 +286,9 @@ re_cycle:
         default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);
 	}
     sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
-    append_queue(0, out); // flush append_queue;
+    a_cmd->len && fputs(a_cmd->buf, out); a_cmd->len = 0; // flush append_queue;
   }
+  vbuf_free(ap); sedLine_free(pattern); sedLine_free(hold);
   return (0);
 }
 
@@ -325,7 +305,7 @@ char		exec_stream(struct sedProgram *prog, char **filelist)
     if (!file)
       printf("Couldn't open file '%s' for reading\n", *filelist);
     else {
-      st |= exec_file(prog, file, stdout);
+      st |= exec_file(prog, file, stdout, *filelist);
       file != stdin && fclose(file);
     }
     ++filelist;
