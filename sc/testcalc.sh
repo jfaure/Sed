@@ -53,12 +53,27 @@ tests=( # generate more by looping ./gentest.sh
     '-0%(-3%(0))'
     '-0*(-9%2)'
     '-0-6/1'
+    '-9*-8/-0+2'
+    '-2-6/(2)/2'
+    '-1+(0)/-5%7'
+    '-3-4/(1-2)'
+    '-4-3/(-4%(9))'
+    '5-4%4/6'
+    '-4*(0)*(-0)%1'
+    '-8*4*(0)*5'
+    '-2%-6/-2%2'
+    '-1%2/-4/(8)'
+    '-1*-0+(-2%5)'
+    '4%7*-7%4'
+    '5-4*(-0)-(8)'
+    '3*0+2-0'
+    '-0*0%-4/4'
     )
 let 'ok=ko=0'
 for a in "${tests[@]}"; do
   if save=$(diff \
-    <($1sed -f sedcalc <<< "$a") \
-    <(2>/dev/null bc <<< "$a")); then
+    <($1sed -f sedcalc <<< "$a" 2>/dev/null) \
+    <(bc <<< "$a" 2>/dev/null)); then
     let ++ok;
   else
     if ((!ko)); then echo failed:; fi
