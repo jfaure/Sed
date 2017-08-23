@@ -79,7 +79,7 @@ char			compile_address_regex(regex_t *regex, char delim)
   while ((in = nextChar()) == 'I' || in == 'M')
     cflags |= in == 'I' ? REG_ICASE : REG_NEWLINE;
   xregcomp(regex, text->buf, cflags);
-  vbuf_free(text);
+  vbuf_del(text);
   return (in);
 }
 
@@ -87,12 +87,8 @@ char			compile_address(struct sedAddr *addr, char in)
 {
   if (in == '-' || in == '$' || isdigit(in)) {
     addr->type = ADDR_LINE;
-    if (in == '-')
-      addr->info.line = -nextNum(nextChar());
-    else if (in == '$')
-      addr->info.line = -1;
-    else
-      addr->info.line = nextNum(in);
+    addr->info.line = in == '$' ? -1 : in == '-' ?
+      -nextNum(nextChar()) : nextNum(in);
     in = nextChar();
     if (addr->info.line < g_lineInfo.lookahead)
       g_lineInfo.lookahead = addr->info.line;
@@ -158,7 +154,7 @@ void			compile_y(struct sedCmd *cmd)
       panic("y: %c is already mapped to %c", a[t], b[t]);
     else
       cmd->info.y[(int) a->buf[t]] = b->buf[t];
-  vbuf_free(a); vbuf_free(b);
+  vbuf_del(a); vbuf_del(b);
 }
 
 char	get_s_options(struct SCmd *s)
@@ -178,8 +174,7 @@ char	get_s_options(struct SCmd *s)
     case EOF: case '\r': return (cflags);
     default: panic("s: unknown option '%c'", delim);
     }
-  assert(delim);
-  return (cflags);
+  // panic
 }
 
 char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
@@ -211,13 +206,11 @@ char			**S_backrefs(struct SCmd *s, struct SReplacement *new, char *replace)
 
 struct SCmd 		*compile_s()
 {
-  struct SCmd		*s;
-  char			delim;
-  struct vbuf	*replace, *regex;
+  struct SCmd		*s = xmalloc(sizeof(*s));
+  char			delim = nextChar();
+  struct vbuf		*replace, *regex;
   int			cflags;
 
-  s = xmalloc(sizeof(*s));
-  delim = nextChar();
   delim == '\\' && (delim = nextChar());
   if (!(regex = snarf(delim, g_sedOptions.extended_regex_syntax ? 1 : -1))
       || !(replace = snarf(delim, 0)))
@@ -228,7 +221,7 @@ struct SCmd 		*compile_s()
   s->new.recipe = S_backrefs(s, &s->new, s->new.text);
   free(replace);
   xregcomp(&s->pattern, regex->buf, cflags);
-  vbuf_free(regex);
+  vbuf_del(regex);
   return (s);
 }
 
@@ -290,7 +283,6 @@ char			do_label(struct sedProgram *labelcmd, struct sedProgram *jmpcmd)
 #define compile_rbrace if (!l_paren) panic("unexpected '}'");\
   		     else *l_paren = prog; l_paren = NULL;
 
-// add 'e' and 'F' commands ?
 struct sedProgram	*compile_program(struct sedProgram *const first)
 {
   static struct obstack	obstack;
@@ -306,7 +298,7 @@ struct sedProgram	*compile_program(struct sedProgram *const first)
   prog = first->next = obstack_alloc(&obstack, sizeof(*prog));
   while ((cmd = &prog->cmd)->cmdChar = compile_cmd_address(cmd)) {
     switch (cmd->cmdChar) {
-    case '#': vbuf_free(vbuf_readName()); 				continue;
+    case '#': vbuf_del(vbuf_readName()); 				continue;
     case '{': compile_lbrace; 						break;
     case '}': compile_rbrace; 						break;
     case 'a': case 'i': case 'c': cmd->info.text = read_text(); 	break;

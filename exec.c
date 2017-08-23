@@ -10,16 +10,19 @@ bool		match_address(addr, pattern)
     && !regexec(&addr->info.regex, pattern->active, 0, NULL, 0)));
 }
 
+# define addressIfRangeInactive(addr, pattern)		\
+  if (addr->a1.type != ADDR_NONE) // range inactive	\
+    if (match_address(&addr->a1, pattern)) {		\
+      addr->a1.type = ADDR_NONE; // activate range 	\
+      return (true);					\
+    }							\
+    else						\
+      return (false);
+ 
 bool		match_addressRange(addr, pattern)
   struct sedCmdAddr *addr; struct sedLine *pattern;
 {
-  if (addr->a1.type != ADDR_NONE) // range inactive
-    if (match_address(&addr->a1, pattern)) {
-      addr->a1.type = ADDR_NONE; // activate range 
-      return (true);
-    }
-    else
-      return (false);
+  addressIfRangeInactive(addr, pattern);
   // range active
   if (match_address(&addr->a2, pattern))
     addr->type = CMD_ADDR_DONE;  // Address will never be matched again.. (remove cmd ?)
@@ -28,14 +31,8 @@ bool		match_addressRange(addr, pattern)
 
 bool		match_addressStep(addr, pattern)
   struct sedCmdAddr *addr; struct sedLine *pattern;
-{ 
-  if (addr->a1.type != ADDR_NONE) // step inactive
-    if (match_address(&addr->a1, pattern)) {
-      addr->a1.type = ADDR_NONE; // activate range 
-      return (true);
-    }
-    else
-      return (false);
+{
+  addressIfRangeInactive(addr, pattern);
   // step active
   --addr->step || (addr->step = addr->a2.info.line);
   return (addr->step == addr->a2.info.line);
@@ -154,7 +151,7 @@ void			sedLine_deleteEmbeddedLine(struct sedLine *l, FILE *out)
   char			*save = l->active;
 
   l->active = strchrnul(l->active, '\n');
-  l->active += *l->active == '\n';
+  *l->active == '\n' && ++l->active;
   l->len -= l->active - save;
   if (out && l->len) {
     fwrite(l->active, l->active - save, 1, out);
@@ -172,6 +169,7 @@ void			sedLine_deleteLine(struct sedLine *l, FILE *out)
 
 void			sedLine_appendLineList(struct sedLine *line, struct sedLine *ap)
 {
+  sedLine_appendText(line, "\n", 1);
   sedLine_appendText(line, ap->active, ap->len);
 }
 
@@ -195,8 +193,7 @@ struct vbuf		*resolve_backrefs(struct vbuf *new, struct SCmd *s,
 {
   char		**recipe = s->new.recipe;
 
-  new->len = 0;
-  for (; *recipe != (char *) -1; ++recipe) // \n\n breaks '$'
+  for (new->len = 0; *recipe != (char *) -1; ++recipe)
     if ((long) *recipe < 10)
       vbuf_addString(new, cursor + pmatch[(long) *recipe].rm_so,
 	  pmatch[(long) *recipe].rm_eo - pmatch[(long) *recipe].rm_so);
@@ -230,65 +227,65 @@ char			exec_s(struct SCmd *s, struct sedLine *pattern)
     pattern->len += new->len - (pmatch[0].rm_eo - pmatch[0].rm_so);
     cursor += pmatch[0].rm_so + new->len;
   } while ((const char) s->g && *cursor);
-  vbuf_free(new);
-  return (subs); // has a substitution been made
+  vbuf_del(new);
+  return (subs); // how many ? (only >1 if g option)
 }
 
 char			exec_file(struct sedProgram *const first, FILE *in, FILE *out,
 				  char const *const filename)
 {
-  char				lastsub = 0;
-  struct sedProgram		*prog = first;
-  struct sedLine 		*pattern = sedLine_new(), *hold = sedLine_new(), *x;
-  struct sedCmd			*cmd;
-  struct vbuf			*a_cmd = vbuf_new();
+  char			lastsub = 0; // successful s since t or T ?
+  struct sedProgram	*prog = first;
+  struct sedLine 	pattern, hold, x;
+  struct vbuf		a_cmd;
+  struct sedCmd		*cmd;
+  FILE 			*file;
 
+  sedLine_init(&pattern); sedLine_init(&hold); vbuf_init(&a_cmd);
 re_cycle:
-  while (sedLine_readLine(pattern, in) == true) {
+  while (sedLine_readLine(&pattern, in) == true) {
     while ((prog = prog->next) != first && (cmd = &prog->cmd))
-      if (!cmd->addr || match_cmdAddress(prog, cmd->addr, pattern))
+      if (!cmd->addr || match_cmdAddress(prog, cmd->addr, &pattern))
 	switch (cmd->cmdChar) {
-	case '#': case ':': case '}': break;
-        case '{': prog = cmd->info.jmp; continue;
-        case '=': fprintf(out, "%d\n", g_lineInfo.current); break;
-        case 'a': vbuf_addString(a_cmd, cmd->info.text->buf, cmd->info.text->len);		break;
-        case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); break;
-        case 'q': sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL :  out);
+	case '#': case ':': case '}': 						break;
+        case '{': prog = cmd->info.jmp; 					continue;
+        case '=': fprintf(out, "%d\n", g_lineInfo.current); 			break;
+        case 'a': vbuf_addString(a_cmd, cmd->info.text->buf, cmd->info.text->len);	break;
+        case 'i': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); 	break;
+        case 'q': sedLine_deleteLine(&pattern, g_sedOptions.silent ? NULL :  out); //fall
         case 'Q': return (cmd->info.int_arg);
-        case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fallthrough
-	case 'd': sedLine_deleteLine(pattern, NULL); prog = first; goto re_cycle;
-        case 'D': sedLine_deleteEmbeddedLine(pattern, NULL); pattern->chomped = false; break;
-        case 'h': sedLine_deleteLine(hold, 0);
-	          sedLine_appendLineList(hold, pattern); break;
-        case 'H': sedLine_appendLineList(hold, pattern); break;
-        case 'g': sedLine_deleteLine(pattern, 0);
-	          sedLine_appendLineList(pattern, hold);break;
-        case 'G': sedLine_appendText(pattern, "\n", 1); sedLine_appendLineList(pattern, hold); break;
-	case 'l': exec_l(pattern->buf, out); sedLine_deleteLine(pattern, 0); goto re_cycle;
-        case 'n': sedLine_deleteLine(pattern, out); sedLine_readLine(pattern, in); continue;
-        case 'N': sedLine_readLine(pattern, in); break;
-        case 'p': sedLine_printLine(pattern, out); break;
-        case 'P': sedLine_printEmbeddedLine(pattern, out);break;
-        case 's': lastsub |= exec_s(cmd->info.s, pattern); break;
- 	case 'b': prog = cmd->info.jmp;	continue;
-        case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;
-        case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; continue;
-	case 'e': FILE *t = popen(pattern->active, "w"); pclose(t); break;
-	case 'F': fputs(filename, out);
-        case 'r':
+        case 'c': fwrite(cmd->info.text->buf, cmd->info.text->len, 1, out); // fall
+	case 'd': d: sedLine_deleteLine(&pattern, NULL); prog = first; 		goto re_cycle;
+        case 'D': sedLine_deleteEmbeddedLine(&pattern, NULL); pattern.chomped = false; break;
+        case 'h': sedLine_deleteLine(&hold, 0); 				//fall
+        case 'H': sedLine_appendLineList(&hold, &pattern); 			break;
+        case 'g': sedLine_deleteLine(&pattern, 0); 				//fall
+        case 'G': sedLine_appendLineList(&pattern, &hold); 			break;
+	case 'l': exec_l(pattern.buf, out); 					goto d;
+        case 'n': sedLine_deleteLine(&pattern, out); sedLine_readLine(&pattern, in); 	continue;
+        case 'N': sedLine_readLine(&pattern, in); 				break;
+        case 'p': sedLine_printLine(&pattern, out); 				break;
+        case 'P': sedLine_printEmbeddedLine(&pattern, out);			break;
+        case 's': lastsub |= exec_s(cmd->info.s, &pattern); 			break;
+ 	case 'b': prog = cmd->info.jmp;						continue;
+        case 'T': lastsub || (prog = cmd->info.jmp); lastsub = 0;		//fall
+        case 't': lastsub && (prog = cmd->info.jmp); lastsub = 0; 		continue;
+	case 'e': file = popen(pattern.active, "w"); pclose(file); 		goto d;
+	case 'F': fputs(filename, out);						break;
+	case 'r':
         case 'R':
         case 'w':
-        case 'W': panic("'%c' is not implemented", cmd->cmdChar);
-        case 'x': x = pattern; pattern = hold; hold = x; break;
-        case 'z': sedLine_deleteLine(pattern, 0); break;
-        case 'y': for (char *p = pattern->active; p <= pattern->active + pattern->len; ++p)
-	            cmd->info.y[*p] && (*p = cmd->info.y[*p]); break;
-        default : panic("Internal error: compiled '%c'(%d)", cmd->cmdChar, cmd->cmdChar);
+        case 'W': panic("not done"); 						break;
+        case 'x': x = pattern; pattern = hold; hold = x; 			break;
+        case 'z': sedLine_deleteLine(&pattern, 0); 				break;
+        case 'y': for (char *p = pattern.active; p <= pattern.active + pattern.len; ++p)
+	            cmd->info.y[*p] && (*p = cmd->info.y[*p]); 			break;
+        default : panic("Internal error: compiled '%c'", cmd->cmdChar, cmd->cmdChar);
 	}
-    sedLine_deleteLine(pattern, g_sedOptions.silent ? NULL : out);
-    a_cmd->len && fputs(a_cmd->buf, out); a_cmd->len = 0; // flush append_queue;
+    sedLine_deleteLine(&pattern, g_sedOptions.silent ? NULL : out);
+    a_cmd.len && fputs(a_cmd.buf, out); a_cmd.len = 0; // flush append_queue;
   }
-  vbuf_free(ap); sedLine_free(pattern); sedLine_free(hold);
+  free(a_cmd.buf);
   return (0);
 }
 
@@ -298,7 +295,7 @@ char		exec_stream(struct sedProgram *prog, char **filelist)
   FILE		*file;
 
   if (!*filelist)
-    st = exec_file(prog, stdin, stdout);
+    st = exec_file(prog, stdin, stdout, "-");
   while (*filelist) {
     g_sedOptions.separate && (g_lineInfo.current = 0);
     file = **filelist == '-'  && !filelist[0][1] ? stdin : fopen(*filelist, "r");

@@ -1,7 +1,9 @@
 #ifndef DATA_H_
 # define DATA_H_
 
-#define _GNU_SOURCE
+#ifndef _GNU_SOURCE
+ #define _GNU_SOURCE
+#endif
 
 #include <unistd.h>
 #include <getopt.h>
@@ -12,7 +14,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-#include <assert.h> //temporary ?
+#include <assert.h>
 #include <ctype.h>
 
 #include <obstack.h>
@@ -66,6 +68,7 @@ char	nextChar();
 
 char	nextProgStream();
 
+#define vbuf_init(text) (text)->buf = xmalloc((text)->alloc = 256); (text)->len = 0;
 struct		vbuf	{// vector buffers grow by xrealloc
   char		*buf;
   ssize_t	len;
@@ -120,16 +123,20 @@ struct 			sedCmd	{
   union		{
     struct SCmd		*s;
     char		*y;
-    struct vbuf		*text; // For a, i, c commands
-    int			int_arg;
-    FILE		*file;
-    struct sedProgram	*jmp; // 'b' 't' 'T' cmds
+    struct vbuf		*text; // a, i, c
+    int			int_arg; // q, Q
+    struct {
+      FILE		*file;
+      char const	*filename;
+    }			file; // w, W, r, R
+    struct sedProgram	*jmp; // b, t, T
   }			info;
 };
 
 /* 
 ** a sedProgram is a circular list of sedCmds in an obstack -
-** to reduce pagefaults and fragmentation, and del cmds quick
+** to reduce pagefaults, fragmentation, del cmds quick
+** and less malloc time/memoryy overhead
 ** first entry contains no cmd info 
 */
 struct			sedProgram	{
@@ -183,20 +190,13 @@ struct vbuf	*vbuf_readName();
 char		*vbuf_tostring(struct vbuf *);
 
 struct sedLine	*sedLine_new();
-void		sedLine_appendText(struct sedLine *l,
-                            char *text, int len);
-void		sedLine_deleteEmbeddedLine(struct sedLine *l,
-                                   FILE *out);
-void		sedLine_appendLineList(struct sedLine *line,
-                               struct sedLine *ap);
-void		sedLine_deleteLine(struct sedLine *l,
-                           FILE *out);
+void	sedLine_appendText(struct sedLine *l, char *text, int len);
+void	sedLine_deleteEmbeddedLine(struct sedLine *l, FILE *out);
+void	sedLine_appendLineList(struct sedLine *line, struct sedLine *ap);
+void	sedLine_deleteLine(struct sedLine *l, FILE *out);
 
-struct sedProgram	*compile_file(struct sedProgram *compile,
-                                const char *f_name);
-struct sedProgram	*compile_string(struct sedProgram *compile,
-                                  char *str);
-char	exec_stream(struct sedProgram *prog,
-                  char **files);
+struct 	sedProgram *compile_file(struct sedProgram *compile, const char *f_name);
+struct 	sedProgram *compile_string(struct sedProgram *compile, char *str);
+char	exec_stream(struct sedProgram *prog, char **files);
 
 #endif // ifndef DATA_H_
